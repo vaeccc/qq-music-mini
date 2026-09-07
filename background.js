@@ -52,6 +52,10 @@ async function requireCredential() {
 
 async function publishState() {
   await setPlayerState(playerState);
+  if (playerState.currentSong) {
+    sendToPlayer({ type: MessageType.SET_MEDIA_SESSION, song: playerState.currentSong, playing: playerState.playing })
+      .catch((error) => console.error("Media Session sync failed", error));
+  }
   chrome.runtime.sendMessage({ type: MessageType.PLAYER_STATE_CHANGED, state: playerState }).catch(() => undefined);
 }
 
@@ -98,6 +102,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       await publishState();
       if (message.event === PlayerEvent.ENDED) await move(1);
       sendResponse({ ok: true });
+      return;
+    }
+    if (message.target === "background" && message.type === MessageType.MEDIA_SESSION_ACTION) {
+      if (message.action === "previous") sendResponse(await move(-1));
+      else if (message.action === "next") sendResponse(await move(1));
+      else if (message.action === "pause") sendResponse(await sendToPlayer({ type: MessageType.PAUSE }));
+      else if (message.action === "play") sendResponse(await sendToPlayer({ type: MessageType.PLAY }));
+      else sendResponse({ ok: false, error: "UNKNOWN_MEDIA_ACTION" });
       return;
     }
     if (message.type === MessageType.GET_PLAYER_STATE) {

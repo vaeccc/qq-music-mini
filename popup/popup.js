@@ -1,4 +1,5 @@
 import { MessageType } from "../api/types.js";
+import { icon } from "./icons.js";
 
 const state = { tab: "liked", library: null, searchKeyword: "", searchResults: [], detail: null, player: null, poll: null, viewRequestId: 0 };
 const elements = {
@@ -9,8 +10,8 @@ function clear(node) { node.replaceChildren(); }
 function showNotice(text = "", kind = "") { elements.notice.hidden = !text; elements.notice.textContent = text; elements.notice.className = `notice ${kind}`; }
 function showLoginView() { elements.login.hidden = false; elements.music.hidden = true; }
 function showMusicView() { elements.login.hidden = true; elements.music.hidden = false; }
-function setCover(node, url) { node.style.backgroundImage = url ? `url("${url}")` : ""; node.textContent = url ? "" : "♪"; }
-function renderPlayer(player) { state.player = player; const song = player?.currentSong; elements.playerTitle.textContent = song?.title || "暂无播放歌曲"; elements.playerArtist.textContent = song?.artist || ""; setCover(elements.playerCover, song?.cover); elements.toggle.textContent = player?.playing ? "⏸" : "▶"; elements.toggle.setAttribute("aria-label", player?.playing ? "暂停" : "播放"); if (player?.errorMessage) showNotice(player.errorMessage); }
+function setCover(node, url) { node.style.backgroundImage = url ? `url("${url}")` : ""; node.innerHTML = url ? "" : icon("note"); }
+function renderPlayer(player) { state.player = player; const song = player?.currentSong; elements.playerTitle.textContent = song?.title || "暂无播放歌曲"; elements.playerArtist.textContent = song?.artist || ""; setCover(elements.playerCover, song?.cover); elements.toggle.innerHTML = icon(player?.playing ? "pause" : "play"); elements.toggle.setAttribute("aria-label", player?.playing ? "暂停" : "播放"); if (player?.errorMessage) showNotice(player.errorMessage); }
 
 function makeSongRow(song, queue) {
   const row = document.createElement("button"); row.className = "song-row";
@@ -32,7 +33,7 @@ function renderPlaylists() {
   elements.content.append(list);
 }
 async function openPlaylist(playlist) { showNotice("正在加载歌单…", "info"); const result = await message(MessageType.GET_PLAYLIST_DETAIL, { playlist }); if (!result.ok) { showNotice(result.message || "网络请求失败"); return; } showNotice(); state.detail = result.playlist; renderPlaylistDetail(); }
-function renderPlaylistDetail() { clear(elements.content); const header = document.createElement("div"); header.className = "detail-header"; const back = document.createElement("button"); back.textContent = "‹"; back.setAttribute("aria-label", "返回歌单"); back.addEventListener("click", () => { state.detail = null; renderPlaylists(); }); const title = document.createElement("strong"); title.textContent = state.detail.title; header.append(back, title); elements.content.append(header, renderSongs(state.detail.songs, "歌单暂无歌曲")); }
+function renderPlaylistDetail() { clear(elements.content); const header = document.createElement("div"); header.className = "detail-header"; const back = document.createElement("button"); back.innerHTML = icon("back"); back.setAttribute("aria-label", "返回歌单"); back.addEventListener("click", () => { state.detail = null; renderPlaylists(); }); const title = document.createElement("strong"); title.textContent = state.detail.title; header.append(back, title); elements.content.append(header, renderSongs(state.detail.songs, "歌单暂无歌曲")); }
 function renderSearch() {
   clear(elements.content); const form = document.createElement("form"); form.className = "search-form"; const input = document.createElement("input"); input.placeholder = "搜索歌曲"; input.value = state.searchKeyword; input.setAttribute("aria-label", "搜索歌曲"); const submit = document.createElement("button"); submit.textContent = "搜索"; form.append(input, submit);
   form.addEventListener("submit", async (event) => { event.preventDefault(); const keyword = input.value.trim(); if (!keyword) return; showNotice("正在搜索…", "info"); const result = await message(MessageType.SEARCH_SONGS, { keyword }); if (!result.ok) { showNotice(result.message || "网络请求失败"); return; } showNotice(); state.searchKeyword = keyword; state.searchResults = result.songs; renderSearch(); });
@@ -45,5 +46,6 @@ async function checkLogin() { const result = await message(MessageType.LOGIN_STA
 document.querySelectorAll(".nav-button").forEach((button) => button.addEventListener("click", () => { state.tab = button.dataset.tab; state.detail = null; renderTab(); }));
 document.querySelector("#login-button").addEventListener("click", startLogin); document.querySelector("#retry-login").addEventListener("click", startLogin);
 document.querySelectorAll("[data-control]").forEach((button) => button.addEventListener("click", async () => { const action = button.dataset.control; const type = action === "previous" ? MessageType.PREVIOUS : action === "next" ? MessageType.NEXT : state.player?.playing ? MessageType.PAUSE : MessageType.PLAY; const result = await message(type); if (!result?.ok) showNotice(result?.message || "播放地址获取失败"); }));
+document.querySelector('[data-control="previous"]').innerHTML = icon("previous"); document.querySelector('[data-control="next"]').innerHTML = icon("next");
 chrome.runtime.onMessage.addListener((message) => { if (message.type === MessageType.PLAYER_STATE_CHANGED) renderPlayer(message.state); });
 (async () => { const player = await message(MessageType.GET_PLAYER_STATE); renderPlayer(player.state); const requestId = ++state.viewRequestId; try { await loadLibrary(); if (requestId === state.viewRequestId) showMusicView(); } catch (error) { if (requestId === state.viewRequestId) { showLoginView(); if (error.error !== "LOGIN_EXPIRED") showNotice(error.message || "网络请求失败"); } } })();
