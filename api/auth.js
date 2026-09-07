@@ -35,7 +35,7 @@ async function musicLogin(code) {
     credentials: "include",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      comm: { ct: 24, cv: 4747474, platform: "yqq.json", uin: 0, format: "json", notice: 0 },
+      comm: { ct: 24, cv: 4747474, platform: "yqq.json", uin: 0, format: "json", notice: 0, tmeLoginType: 2 },
       req_0: { module: "QQConnectLogin.LoginServer", method: "QQLogin", param: { code } }
     })
   });
@@ -86,6 +86,7 @@ export async function pollQrLogin(qrsig) {
   if (!pSkey) throw new QQMusicError(ErrorCode.NETWORK, "登录失败，请重新尝试");
   const authResponse = await fetchText("https://graph.qq.com/oauth2.0/authorize", {
     method: "POST",
+    redirect: "follow",
     headers: { "content-type": "application/x-www-form-urlencoded", Referer: "https://graph.qq.com/" },
     body: new URLSearchParams({
       response_type: "code", client_id: QQ_CONNECT_ID,
@@ -94,8 +95,10 @@ export async function pollQrLogin(qrsig) {
       openapi: "1010_1030", g_tk: String(hash33(pSkey, 5381)), auth_time: String(Date.now()), ui: crypto.randomUUID()
     })
   });
-  const location = authResponse.headers.get("location") || "";
-  const authorizationCode = new URL(location).searchParams.get("code");
+  // Extension fetches can hide Location on a manual cross-origin redirect; the final URL is readable when followed.
+  const callbackUrl = authResponse.headers.get("location") || authResponse.url || "";
+  let authorizationCode = "";
+  try { authorizationCode = new URL(callbackUrl).searchParams.get("code") || ""; } catch (error) { console.error("QQ OAuth callback parsing failed", error); }
   if (!authorizationCode) throw new QQMusicError(ErrorCode.NETWORK, "登录失败，请重新尝试");
   return { status: "done", credential: await musicLogin(authorizationCode) };
 }

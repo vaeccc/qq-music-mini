@@ -35,7 +35,8 @@ function common(credential = null) {
     inCharset: "utf-8",
     outCharset: "utf-8",
     notice: 0,
-    needNewCode: 1
+    needNewCode: 1,
+    tmeLoginType: Number(credential?.loginType || credential?.login_type || 0) || undefined
   };
 }
 
