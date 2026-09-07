@@ -152,11 +152,11 @@ export async function getUserLibrary(credential) {
     user: { musicid, encryptUin },
     liked: (likedData?.songlist || []).map(normalizeSong),
     playlists: rawPlaylists.map((item) => ({
-      id: String(item.tid || item.id || item.dissid || item.dirid),
-      dirid: Number(item.dirid || 0),
-      title: item.dirname || item.name || "未命名歌单",
-      count: Number(item.songnum || item.song_num || 0),
-      cover: item.cover || item.logo || ""
+      id: String(item.tid || item.id || item.dissid || item.dirid || item.dirId),
+      dirid: Number(item.dirid || item.dirId || 0),
+      title: item.title || item.dissname || item.name || item.dirName || item.dirname || "未命名歌单",
+      count: Number(item.songnum || item.songNum || item.song_cnt || item.song_num || 0),
+      cover: item.picurl || item.picUrl || item.bigpicUrl || item.albumPicUrl || item.cover || item.logo || ""
     }))
   };
 }
