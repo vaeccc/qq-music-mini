@@ -87,6 +87,15 @@ function normalizeSong(raw = {}) {
   };
 }
 
+function normalizeSinger(raw = {}) {
+  const mid = valueAt(raw, ["mid", "singer_mid", "singerMid"]);
+  return {
+    mid,
+    name: valueAt(raw, ["name", "singer", "title"], "未知歌手"),
+    cover: valueAt(raw, ["pic", "picurl", "picUrl"]).replace(/^http:/, "https:")
+  };
+}
+
 function checkResponse(response, context) {
   const code = Number(response?.code ?? 0);
   if (code === 0) return response?.data ?? response;
@@ -193,7 +202,39 @@ export async function searchSongs(keyword, credential) {
     console.error("QQ Music search returned error", data?.code);
     throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { code: data?.code });
   }
-  return (data?.data?.song?.list || []).map(normalizeSong).filter((song) => song.mid);
+  const songs = (data?.data?.song?.list || []).map(normalizeSong).filter((song) => song.mid);
+  let singers = [];
+  try {
+    const singerUrl = new URL("https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg");
+    singerUrl.searchParams.set("key", keyword);
+    singerUrl.searchParams.set("format", "json");
+    const singerResponse = await fetch(singerUrl, { credentials: "include" });
+    if (singerResponse.ok) {
+      const singerData = await singerResponse.json();
+      singers = (singerData?.data?.singer?.itemlist || []).map(normalizeSinger).filter((singer) => singer.mid);
+    }
+  } catch (error) {
+    // Singer suggestions enhance ordinary song search, but must not block it.
+    console.warn("QQ Music singer suggestions failed", error);
+  }
+  return { songs, singers };
+}
+
+export async function getSingerSongs(singer, credential) {
+  if (!singer?.mid) throw new QQMusicError(ErrorCode.NETWORK, "歌手信息无效");
+  const response = await musicu({
+    req_0: {
+      module: "musichall.song_list_server",
+      method: "GetSingerSongList",
+      param: { singerMid: singer.mid, order: 1, number: 100, begin: 0 }
+    }
+  }, credential);
+  const data = checkResponse(response.req_0, "singer-songs");
+  return {
+    title: singer.name,
+    singer,
+    songs: (data?.songList || []).map((item) => normalizeSong(item?.songInfo || item)).filter((song) => song.mid)
+  };
 }
 
 export async function getPlayUrl(song, credential) {

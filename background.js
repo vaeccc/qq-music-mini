@@ -2,7 +2,7 @@ import { MessageType, PlayerEvent, emptyPlayerState } from "./api/types.js";
 import { applyBrandIcon } from "./api/brand-icon.js";
 import { clearCredential, getCredential, getPlayerState, setCredential, setPlayerState } from "./storage/store.js";
 import { createQrLogin, pollQrLogin } from "./api/auth.js";
-import { getPlayUrl, getPlaylistDetail, getUserLibrary, QQMusicError, refreshCredential, searchSongs, validateCredential } from "./api/qqmusic.js";
+import { getPlayUrl, getPlaylistDetail, getSingerSongs, getUserLibrary, QQMusicError, refreshCredential, searchSongs, validateCredential } from "./api/qqmusic.js";
 
 let playerState = emptyPlayerState();
 let initialized = false;
@@ -157,11 +157,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === MessageType.SEARCH_SONGS) {
       const keyword = String(message.keyword || "").trim();
       if (!keyword) {
-        sendResponse({ ok: true, songs: [] });
+        sendResponse({ ok: true, songs: [], singers: [] });
         return;
       }
       const credential = await requireCredential();
-      sendResponse({ ok: true, songs: await searchSongs(keyword, credential) });
+      sendResponse({ ok: true, ...(await searchSongs(keyword, credential)) });
+      return;
+    }
+    if (message.type === MessageType.GET_SINGER_SONGS) {
+      const credential = await requireCredential();
+      sendResponse({ ok: true, singer: await getSingerSongs(message.singer, credential) });
       return;
     }
     if (message.type === MessageType.PLAY) {
