@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "QQ Music Mini",
+  "version": "0.1.0",
+  "description": "极简 QQ 音乐浏览器播放器。",
+  "permissions": ["storage", "offscreen"],
+  "host_permissions": [
+    "https://*.y.qq.com/*",
+    "https://*.qq.com/*",
+    "https://*.weixin.qq.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "QQ Music Mini",
+    "default_popup": "popup/popup.html"
+  },
+  "minimum_chrome_version": "109"
+}

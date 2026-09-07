@@ -1,0 +1,36 @@
+export const MessageType = Object.freeze({
+  PLAY_SONG: "PLAY_SONG",
+  PLAY: "PLAY",
+  PAUSE: "PAUSE",
+  PREVIOUS: "PREVIOUS",
+  NEXT: "NEXT",
+  GET_PLAYER_STATE: "GET_PLAYER_STATE",
+  PLAYER_STATE_CHANGED: "PLAYER_STATE_CHANGED",
+  PLAYER_EVENT: "PLAYER_EVENT",
+  LOGIN_START: "LOGIN_START",
+  LOGIN_STATUS: "LOGIN_STATUS",
+  LOGOUT: "LOGOUT",
+  GET_LIBRARY: "GET_LIBRARY",
+  GET_PLAYLIST_DETAIL: "GET_PLAYLIST_DETAIL",
+  SEARCH_SONGS: "SEARCH_SONGS"
+});
+
+export const PlayerEvent = Object.freeze({
+  READY: "READY",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  ENDED: "ENDED",
+  ERROR: "ERROR"
+});
+
+export const ErrorCode = Object.freeze({
+  LOGIN_EXPIRED: "LOGIN_EXPIRED",
+  NETWORK: "NETWORK",
+  NO_PERMISSION: "NO_PERMISSION",
+  NO_COPYRIGHT: "NO_COPYRIGHT",
+  PLAY_URL: "PLAY_URL"
+});
+
+export function emptyPlayerState() {
+  return { queue: [], currentIndex: -1, currentSong: null, playing: false };
+}
