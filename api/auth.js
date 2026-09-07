@@ -1,7 +1,7 @@
 import { QQMusicError } from "./qqmusic.js";
 import { ErrorCode } from "./types.js";
 
-const QR_HOST = "https://ssl.ptlogin2.qq.com";
+const QR_HOST = "https://ssl.ptlogin2.qq.com/";
 const APP_ID = "716027609";
 const QQ_CONNECT_ID = "100497308";
 
@@ -50,23 +50,37 @@ async function musicLogin(code) {
 }
 
 export async function createQrLogin() {
-  const url = query(`${QR_HOST}/ptqrshow`, {
+  const url = query(`${QR_HOST}ptqrshow`, {
     appid: APP_ID, e: 2, l: "M", s: 3, d: 72, v: 4, t: Math.random(), daid: 383, pt_3rd_aid: QQ_CONNECT_ID
   });
-  const response = await fetch(url, { credentials: "include", headers: { Referer: "https://xui.ptlogin2.qq.com/" } });
-  if (!response.ok) throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { status: response.status });
-  const qrsig = (await chrome.cookies.get({ url: QR_HOST, name: "qrsig" }))?.value;
-  if (!qrsig) throw new QQMusicError(ErrorCode.NETWORK, "登录失败，请重新尝试");
+  let response;
+  try { response = await fetch(url, { credentials: "include" }); } catch (error) {
+    console.error("QQ QR image request failed", error);
+    throw new QQMusicError(ErrorCode.NETWORK, "二维码获取失败，请重新尝试", { stage: "qr-image" });
+  }
+  if (!response.ok) {
+    console.error("QQ QR image HTTP failure", response.status);
+    throw new QQMusicError(ErrorCode.NETWORK, "二维码获取失败，请重新尝试", { stage: "qr-image", status: response.status });
+  }
+  let qrsig;
+  try { qrsig = (await chrome.cookies.get({ url: QR_HOST, name: "qrsig" }))?.value; } catch (error) {
+    console.error("QQ QR cookie read failed", error);
+    throw new QQMusicError(ErrorCode.NETWORK, "浏览器未授予 QQ 登录 Cookie 权限，请重新加载扩展", { stage: "qr-cookie" });
+  }
+  if (!qrsig) {
+    console.error("QQ QR image was returned without qrsig cookie");
+    throw new QQMusicError(ErrorCode.NETWORK, "二维码登录初始化失败，请重新加载扩展后再试", { stage: "qr-cookie" });
+  }
   const image = await response.blob();
   return { qrsig, imageUrl: URL.createObjectURL(image) };
 }
 
 export async function pollQrLogin(qrsig) {
-  const response = await fetchText(query(`${QR_HOST}/ptqrlogin`, {
+  const response = await fetchText(query(`${QR_HOST}ptqrlogin`, {
     u1: "https://graph.qq.com/oauth2.0/login_jump", ptqrtoken: hash33(qrsig), ptredirect: 0, h: 1, t: 1, g: 1,
     from_ui: 1, ptlang: 2052, action: `0-0-${Date.now()}`, js_ver: 20102616, js_type: 1, pt_uistyle: 40,
     aid: APP_ID, daid: 383, pt_3rd_aid: QQ_CONNECT_ID, has_onekey: 1
-  }), { headers: { Referer: "https://xui.ptlogin2.qq.com/" } });
+  }));
   const args = parsePtui(await response.text());
   const code = Number(args[0]);
   if (code === 66) return { status: "waiting" };
@@ -81,13 +95,13 @@ export async function pollQrLogin(qrsig) {
     uin, pttype: 1, service: "ptqrlogin", nodirect: 0, ptsigx: sigx, s_url: "https://graph.qq.com/oauth2.0/login_jump",
     ptlang: 2052, ptredirect: 100, aid: APP_ID, daid: 383, j_later: 0, low_login_hour: 0, regmaster: 0,
     pt_login_type: 3, pt_aid: 0, pt_aaid: 16, pt_light: 0, pt_3rd_aid: QQ_CONNECT_ID
-  }), { headers: { Referer: "https://xui.ptlogin2.qq.com/" } });
+  }));
   const pSkey = (await chrome.cookies.get({ url: "https://graph.qq.com/", name: "p_skey" }))?.value;
   if (!pSkey) throw new QQMusicError(ErrorCode.NETWORK, "登录失败，请重新尝试");
   const authResponse = await fetchText("https://graph.qq.com/oauth2.0/authorize", {
     method: "POST",
     redirect: "follow",
-    headers: { "content-type": "application/x-www-form-urlencoded", Referer: "https://graph.qq.com/" },
+    headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       response_type: "code", client_id: QQ_CONNECT_ID,
       redirect_uri: "https://y.qq.com/portal/wx_redirect.html?login_type=1&surl=https://y.qq.com/",
