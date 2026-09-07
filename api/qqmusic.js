@@ -220,19 +220,20 @@ export async function searchSongs(keyword, credential) {
   return { songs, singers };
 }
 
-export async function getSingerSongs(singer, credential) {
+export async function getSingerSongs(singer, credential, begin = 0) {
   if (!singer?.mid) throw new QQMusicError(ErrorCode.NETWORK, "歌手信息无效");
   const response = await musicu({
     req_0: {
       module: "musichall.song_list_server",
       method: "GetSingerSongList",
-      param: { singerMid: singer.mid, order: 1, number: 100, begin: 0 }
+      param: { singerMid: singer.mid, order: 1, number: 30, begin: Math.max(0, Number(begin) || 0) }
     }
   }, credential);
   const data = checkResponse(response.req_0, "singer-songs");
   return {
     title: singer.name,
     singer,
+    total: Number(data?.totalNum || 0),
     songs: (data?.songList || []).map((item) => normalizeSong(item?.songInfo || item)).filter((song) => song.mid)
   };
 }

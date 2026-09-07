@@ -166,7 +166,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
     if (message.type === MessageType.GET_SINGER_SONGS) {
       const credential = await requireCredential();
-      sendResponse({ ok: true, singer: await getSingerSongs(message.singer, credential) });
+      sendResponse({ ok: true, singer: await getSingerSongs(message.singer, credential, message.begin) });
       return;
     }
     if (message.type === MessageType.PLAY) {
