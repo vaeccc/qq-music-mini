@@ -8,5 +8,5 @@ const paths = Object.freeze({
 });
 
 export function icon(name, label = "") {
-  return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="${label ? "false" : "true"}">${paths[name] || paths.note}</svg>`;
+  return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="${label ? "false" : "true"}">${paths[name] || paths.note}</svg>`;
 }
