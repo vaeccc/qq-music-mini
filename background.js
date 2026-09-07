@@ -76,7 +76,7 @@ async function playQueueSong(queue, index) {
 }
 
 function serializeError(error) {
-  console.error("QQ Music Mini operation failed", error);
+  if (!(error instanceof QQMusicError) || error.code !== "LOGIN_EXPIRED") console.error("QQ Music Mini operation failed", error);
   if (error instanceof QQMusicError) return { ok: false, error: error.code, message: error.message };
   return { ok: false, error: "NETWORK", message: "网络请求失败" };
 }
@@ -109,7 +109,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return;
     }
     if (message.type === MessageType.LOGIN_START) {
-      if (loginAttempt?.imageUrl) URL.revokeObjectURL(loginAttempt.imageUrl);
       loginAttempt = await createQrLogin();
       sendResponse({ ok: true, imageUrl: loginAttempt.imageUrl });
       return;
@@ -122,7 +121,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const login = await pollQrLogin(loginAttempt.qrsig);
       if (login.status === "done") {
         await setCredential(login.credential);
-        URL.revokeObjectURL(loginAttempt.imageUrl);
         loginAttempt = null;
       }
       sendResponse({ ok: true, ...login });

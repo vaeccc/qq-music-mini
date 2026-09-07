@@ -29,6 +29,16 @@ function parsePtui(text) {
   return quoted;
 }
 
+async function blobToDataUrl(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let start = 0; start < bytes.length; start += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(start, start + chunkSize));
+  }
+  return `data:${blob.type || "image/png"};base64,${btoa(binary)}`;
+}
+
 async function musicLogin(code) {
   const response = await fetch("https://u.y.qq.com/cgi-bin/musicu.fcg", {
     method: "POST",
@@ -72,7 +82,7 @@ export async function createQrLogin() {
     throw new QQMusicError(ErrorCode.NETWORK, "二维码登录初始化失败，请重新加载扩展后再试", { stage: "qr-cookie" });
   }
   const image = await response.blob();
-  return { qrsig, imageUrl: URL.createObjectURL(image) };
+  return { qrsig, imageUrl: await blobToDataUrl(image) };
 }
 
 export async function pollQrLogin(qrsig) {
