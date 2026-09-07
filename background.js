@@ -6,22 +6,30 @@ import { getPlayUrl, getPlaylistDetail, getUserLibrary, QQMusicError, refreshCre
 let playerState = emptyPlayerState();
 let initialized = false;
 let loginAttempt = null;
+let offscreenCreating = null;
+let playRequestId = 0;
 
 async function ensureOffscreenDocument() {
-  const offscreenUrl = chrome.runtime.getURL("offscreen/offscreen.html");
-  const contexts = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [offscreenUrl] });
-  if (!contexts.length) {
-    await chrome.offscreen.createDocument({
-      url: "offscreen/offscreen.html",
-      reasons: ["AUDIO_PLAYBACK"],
-      justification: "在关闭扩展弹窗后继续播放用户有权播放的音乐。"
-    });
-  }
+  if (offscreenCreating) return offscreenCreating;
+  offscreenCreating = (async () => {
+    const offscreenUrl = chrome.runtime.getURL("offscreen/offscreen.html");
+    const contexts = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [offscreenUrl] });
+    if (!contexts.length) {
+      await chrome.offscreen.createDocument({
+        url: "offscreen/offscreen.html",
+        reasons: ["AUDIO_PLAYBACK"],
+        justification: "在关闭扩展弹窗后继续播放用户有权播放的音乐。"
+      });
+    }
+  })();
+  try { await offscreenCreating; } finally { offscreenCreating = null; }
 }
 
 async function initialize() {
   if (initialized) return;
   playerState = (await getPlayerState()) || emptyPlayerState();
+  // Audio URLs are intentionally never persisted, so a browser restart restores the queue as paused.
+  playerState.playing = false;
   initialized = true;
 }
 
@@ -55,10 +63,12 @@ async function sendToPlayer(message) {
 async function playQueueSong(queue, index) {
   await initialize();
   if (!Array.isArray(queue) || index < 0 || index >= queue.length) return { ok: false, error: "INVALID_QUEUE" };
+  const requestId = ++playRequestId;
   const song = queue[index];
   const credential = await requireCredential();
   const playUrl = song.playUrl || await getPlayUrl(song, credential);
-  playerState = { queue, currentIndex: index, currentSong: song, playing: false };
+  if (requestId !== playRequestId) return { ok: true, discarded: true };
+  playerState = { queue, currentIndex: index, currentSong: song, playing: false, errorMessage: "" };
   await publishState();
   const result = await sendToPlayer({ type: MessageType.PLAY_SONG, url: playUrl });
   if (!result?.ok) return result || { ok: false, error: "PLAYBACK_FAILED" };
@@ -84,6 +94,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.target === "background" && message.type === MessageType.PLAYER_EVENT) {
       if (message.event === PlayerEvent.PLAYING) playerState.playing = true;
       if (message.event === PlayerEvent.PAUSED || message.event === PlayerEvent.ERROR || message.event === PlayerEvent.ENDED) playerState.playing = false;
+      if (message.event === PlayerEvent.ERROR) playerState.errorMessage = "当前歌曲暂不可播放";
       await publishState();
       if (message.event === PlayerEvent.ENDED) await move(1);
       sendResponse({ ok: true });
