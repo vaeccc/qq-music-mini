@@ -173,15 +173,23 @@ export async function getPlaylistDetail(playlist, credential) {
 }
 
 export async function searchSongs(keyword, credential) {
-  const response = await musicu({
-    req_0: {
-      module: "music.search.SearchCgiService",
-      method: "DoSearchForQQMusicDesktop",
-      param: { grp: 1, num_per_page: 30, page_num: 1, query: keyword, search_type: 0 }
-    }
-  }, credential);
-  const data = checkResponse(response.req_0, "search");
-  return (data?.body?.song?.list || data?.song?.list || []).map(normalizeSong).filter((song) => song.mid);
+  let quickResponse;
+  try {
+    quickResponse = await fetch(`https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg?key=${encodeURIComponent(keyword)}`, { credentials: "include" });
+  } catch (error) {
+    console.error("QQ Music quick search failed", error);
+    throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败");
+  }
+  if (!quickResponse.ok) throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { status: quickResponse.status });
+  const quickData = await quickResponse.json();
+  const candidates = quickData?.data?.song?.itemlist || [];
+  const details = await Promise.allSettled(candidates.map(async (candidate) => {
+    const response = await musicu({
+      req_0: { module: "music.pf_song_detail_svr", method: "get_song_detail_yqq", param: { song_mid: candidate.mid } }
+    }, credential);
+    return normalizeSong(checkResponse(response.req_0, "song-detail")?.track_info);
+  }));
+  return details.map((result, index) => result.status === "fulfilled" ? result.value : normalizeSong(candidates[index])).filter((song) => song.mid);
 }
 
 export async function getPlayUrl(song, credential) {
