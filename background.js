@@ -1,4 +1,5 @@
 import { MessageType, PlayerEvent, emptyPlayerState } from "./api/types.js";
+import { applyBrandIcon } from "./api/brand-icon.js";
 import { clearCredential, getCredential, getPlayerState, setCredential, setPlayerState } from "./storage/store.js";
 import { createQrLogin, pollQrLogin } from "./api/auth.js";
 import { getPlayUrl, getPlaylistDetail, getUserLibrary, QQMusicError, refreshCredential, searchSongs, validateCredential } from "./api/qqmusic.js";
@@ -186,3 +187,4 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 initialize().catch((error) => console.error("Player initialization failed", error));
+applyBrandIcon().catch((error) => console.error("Brand icon initialization failed", error));
