@@ -174,23 +174,26 @@ export async function getPlaylistDetail(playlist, credential) {
 }
 
 export async function searchSongs(keyword, credential) {
+  const url = new URL("https://c.y.qq.com/soso/fcgi-bin/client_search_cp");
+  Object.entries({
+    p: 1, n: 20, w: keyword, format: "json", new_json: 1, cr: 1, g_tk: hash33(credential?.musickey || ""),
+    loginUin: credential?.musicid || 0, hostUin: 0, t: 0, aggr: 1, inCharset: "utf8", outCharset: "utf-8",
+    notice: 0, platform: "yqq.json", needNewCode: 0
+  }).forEach(([key, value]) => url.searchParams.set(key, String(value)));
   let quickResponse;
   try {
-    quickResponse = await fetch(`https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg?key=${encodeURIComponent(keyword)}`, { credentials: "include" });
+    quickResponse = await fetch(url, { credentials: "include" });
   } catch (error) {
-    console.error("QQ Music quick search failed", error);
+    console.error("QQ Music search failed", error);
     throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败");
   }
   if (!quickResponse.ok) throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { status: quickResponse.status });
-  const quickData = await quickResponse.json();
-  const candidates = quickData?.data?.song?.itemlist || [];
-  const details = await Promise.allSettled(candidates.map(async (candidate) => {
-    const response = await musicu({
-      req_0: { module: "music.pf_song_detail_svr", method: "get_song_detail_yqq", param: { song_mid: candidate.mid } }
-    }, credential);
-    return normalizeSong(checkResponse(response.req_0, "song-detail")?.track_info);
-  }));
-  return details.map((result, index) => result.status === "fulfilled" ? result.value : normalizeSong(candidates[index])).filter((song) => song.mid);
+  const data = await quickResponse.json();
+  if (Number(data?.code) !== 0) {
+    console.error("QQ Music search returned error", data?.code);
+    throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { code: data?.code });
+  }
+  return (data?.data?.song?.list || []).map(normalizeSong).filter((song) => song.mid);
 }
 
 export async function getPlayUrl(song, credential) {
