@@ -1,8 +1,11 @@
 import { MessageType, PlayerEvent, emptyPlayerState } from "./api/types.js";
-import { getPlayerState, setPlayerState } from "./storage/store.js";
+import { clearCredential, getCredential, getPlayerState, setCredential, setPlayerState } from "./storage/store.js";
+import { createQrLogin, pollQrLogin } from "./api/auth.js";
+import { getPlayUrl, getPlaylistDetail, getUserLibrary, QQMusicError, refreshCredential, searchSongs, validateCredential } from "./api/qqmusic.js";
 
 let playerState = emptyPlayerState();
 let initialized = false;
+let loginAttempt = null;
 
 async function ensureOffscreenDocument() {
   const offscreenUrl = chrome.runtime.getURL("offscreen/offscreen.html");
@@ -22,6 +25,23 @@ async function initialize() {
   initialized = true;
 }
 
+async function requireCredential() {
+  const credential = await getCredential();
+  if (!credential) throw new QQMusicError("LOGIN_EXPIRED", "QQ 音乐登录已失效，请重新登录");
+  if (await validateCredential(credential)) return credential;
+  try {
+    const refreshed = await refreshCredential(credential);
+    if (await validateCredential(refreshed)) {
+      await setCredential(refreshed);
+      return refreshed;
+    }
+  } catch (error) {
+    console.error("Credential refresh failed", error);
+  }
+  await clearCredential();
+  throw new QQMusicError("LOGIN_EXPIRED", "QQ 音乐登录已失效，请重新登录");
+}
+
 async function publishState() {
   await setPlayerState(playerState);
   chrome.runtime.sendMessage({ type: MessageType.PLAYER_STATE_CHANGED, state: playerState }).catch(() => undefined);
@@ -35,14 +55,20 @@ async function sendToPlayer(message) {
 async function playQueueSong(queue, index) {
   await initialize();
   if (!Array.isArray(queue) || index < 0 || index >= queue.length) return { ok: false, error: "INVALID_QUEUE" };
-  // Stage 2 architecture test: a caller may supply a short-lived, lawful test URL.
   const song = queue[index];
-  if (!song.playUrl) return { ok: false, error: "PLAY_URL_REQUIRED" };
+  const credential = await requireCredential();
+  const playUrl = song.playUrl || await getPlayUrl(song, credential);
   playerState = { queue, currentIndex: index, currentSong: song, playing: false };
   await publishState();
-  const result = await sendToPlayer({ type: MessageType.PLAY_SONG, url: song.playUrl });
+  const result = await sendToPlayer({ type: MessageType.PLAY_SONG, url: playUrl });
   if (!result?.ok) return result || { ok: false, error: "PLAYBACK_FAILED" };
   return { ok: true, state: playerState };
+}
+
+function serializeError(error) {
+  console.error("QQ Music Mini operation failed", error);
+  if (error instanceof QQMusicError) return { ok: false, error: error.code, message: error.message };
+  return { ok: false, error: "NETWORK", message: "网络请求失败" };
 }
 
 async function move(offset) {
@@ -71,6 +97,51 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse(await playQueueSong(message.queue, message.index));
       return;
     }
+    if (message.type === MessageType.LOGIN_START) {
+      if (loginAttempt?.imageUrl) URL.revokeObjectURL(loginAttempt.imageUrl);
+      loginAttempt = await createQrLogin();
+      sendResponse({ ok: true, imageUrl: loginAttempt.imageUrl });
+      return;
+    }
+    if (message.type === MessageType.LOGIN_STATUS) {
+      if (!loginAttempt?.qrsig) {
+        sendResponse({ ok: false, error: "NO_LOGIN_ATTEMPT", message: "登录失败，请重新尝试" });
+        return;
+      }
+      const login = await pollQrLogin(loginAttempt.qrsig);
+      if (login.status === "done") {
+        await setCredential(login.credential);
+        URL.revokeObjectURL(loginAttempt.imageUrl);
+        loginAttempt = null;
+      }
+      sendResponse({ ok: true, ...login });
+      return;
+    }
+    if (message.type === MessageType.LOGOUT) {
+      await clearCredential();
+      sendResponse({ ok: true });
+      return;
+    }
+    if (message.type === MessageType.GET_LIBRARY) {
+      const credential = await requireCredential();
+      sendResponse({ ok: true, library: await getUserLibrary(credential) });
+      return;
+    }
+    if (message.type === MessageType.GET_PLAYLIST_DETAIL) {
+      const credential = await requireCredential();
+      sendResponse({ ok: true, playlist: await getPlaylistDetail(message.playlist, credential) });
+      return;
+    }
+    if (message.type === MessageType.SEARCH_SONGS) {
+      const keyword = String(message.keyword || "").trim();
+      if (!keyword) {
+        sendResponse({ ok: true, songs: [] });
+        return;
+      }
+      const credential = await requireCredential();
+      sendResponse({ ok: true, songs: await searchSongs(keyword, credential) });
+      return;
+    }
     if (message.type === MessageType.PLAY) {
       const result = await sendToPlayer({ type: MessageType.PLAY });
       sendResponse(result);
@@ -89,10 +160,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return;
     }
     sendResponse({ ok: false, error: "UNKNOWN_MESSAGE" });
-  })().catch((error) => {
-    console.error("Background message failed", error);
-    sendResponse({ ok: false, error: "UNEXPECTED_ERROR" });
-  });
+  })().catch((error) => sendResponse(serializeError(error)));
   return true;
 });
 

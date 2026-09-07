@@ -3,7 +3,7 @@
   "name": "QQ Music Mini",
   "version": "0.1.0",
   "description": "极简 QQ 音乐浏览器播放器。",
-  "permissions": ["storage", "offscreen"],
+  "permissions": ["storage", "offscreen", "cookies"],
   "host_permissions": [
     "https://*.y.qq.com/*",
     "https://*.qq.com/*",
