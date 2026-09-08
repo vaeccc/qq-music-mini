@@ -93,6 +93,16 @@ async function move(offset) {
   return playQueueSong(playerState.queue, nextIndex);
 }
 
+async function resumeCurrentSong() {
+  await initialize();
+  const playback = await sendToPlayer({ type: MessageType.GET_PLAYBACK_STATUS });
+  if (playback?.hasSource) return sendToPlayer({ type: MessageType.PLAY });
+  if (!playerState.currentSong || playerState.currentIndex < 0) {
+    return { ok: false, error: "NO_SONG", message: "请先选择一首歌曲" };
+  }
+  return playQueueSong(playerState.queue, playerState.currentIndex);
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     await initialize();
@@ -109,7 +119,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.action === "previous") sendResponse(await move(-1));
       else if (message.action === "next") sendResponse(await move(1));
       else if (message.action === "pause") sendResponse(await sendToPlayer({ type: MessageType.PAUSE }));
-      else if (message.action === "play") sendResponse(await sendToPlayer({ type: MessageType.PLAY }));
+      else if (message.action === "play") sendResponse(await resumeCurrentSong());
       else sendResponse({ ok: false, error: "UNKNOWN_MEDIA_ACTION" });
       return;
     }
@@ -170,7 +180,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return;
     }
     if (message.type === MessageType.PLAY) {
-      const result = await sendToPlayer({ type: MessageType.PLAY });
+      const result = await resumeCurrentSong();
       sendResponse(result);
       return;
     }

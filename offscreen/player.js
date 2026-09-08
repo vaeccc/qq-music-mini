@@ -61,6 +61,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     });
     return true;
   }
+  if (message.type === MessageType.GET_PLAYBACK_STATUS) {
+    sendResponse({ ok: true, hasSource: Boolean(audio.currentSrc || audio.src) });
+    return;
+  }
   if (message.type === MessageType.PAUSE) {
     audio.pause();
     sendResponse({ ok: true });
