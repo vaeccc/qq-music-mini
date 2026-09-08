@@ -1,17 +1,11 @@
-const sizes = [16, 32, 48, 128];
+const paths = Object.freeze({
+  16: "icons/qq-music-mini-16.png",
+  32: "icons/qq-music-mini-32.png",
+  128: "icons/qq-music-mini-128.png"
+});
 
+// Manifest icons are already decoded by the browser. Reusing them avoids
+// attempting to rasterize user-provided SVG artwork in a service worker.
 export async function applyBrandIcon() {
-  const response = await fetch(chrome.runtime.getURL("icons/qq-music-1.svg"));
-  const svg = await response.text();
-  const bitmap = await createImageBitmap(new Blob([svg], { type: "image/svg+xml" }));
-  const imageData = {};
-  for (const size of sizes) {
-    const canvas = new OffscreenCanvas(size, size);
-    const context = canvas.getContext("2d");
-    context.clearRect(0, 0, size, size);
-    context.drawImage(bitmap, 0, 0, size, size);
-    imageData[size] = context.getImageData(0, 0, size, size);
-  }
-  bitmap.close();
-  await chrome.action.setIcon({ imageData });
+  await chrome.action.setIcon({ path: paths });
 }
