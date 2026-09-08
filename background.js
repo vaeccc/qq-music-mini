@@ -76,7 +76,12 @@ async function playQueueSong(queue, index) {
   playerState = { queue, currentIndex: index, currentSong: song, playing: false, errorMessage: "" };
   await publishState();
   const result = await sendToPlayer({ type: MessageType.PLAY_SONG, url: playUrl });
-  if (!result?.ok) return result || { ok: false, error: "PLAYBACK_FAILED" };
+  if (!result?.ok) {
+    playerState.playing = false;
+    playerState.errorMessage = "当前歌曲暂不可播放";
+    await publishState();
+    return result || { ok: false, error: "PLAYBACK_FAILED" };
+  }
   return { ok: true, state: playerState };
 }
 
@@ -98,7 +103,15 @@ async function resumeCurrentSong() {
   // A second press after an audio error is an intentional request to skip it.
   if (playerState.errorMessage) return move(1);
   const playback = await sendToPlayer({ type: MessageType.GET_PLAYBACK_STATUS });
-  if (playback?.hasSource) return sendToPlayer({ type: MessageType.PLAY });
+  if (playback?.hasSource) {
+    const result = await sendToPlayer({ type: MessageType.PLAY });
+    if (!result?.ok) {
+      playerState.playing = false;
+      playerState.errorMessage = "当前歌曲暂不可播放";
+      await publishState();
+    }
+    return result;
+  }
   if (!playerState.currentSong || playerState.currentIndex < 0) {
     return { ok: false, error: "NO_SONG", message: "请先选择一首歌曲" };
   }

@@ -50,14 +50,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     audio.src = message.url;
     audio.play().then(() => sendResponse({ ok: true })).catch((error) => {
       console.error("Audio playback failed", error);
-      sendResponse({ ok: false, error: "PLAYBACK_FAILED" });
+      sendResponse({ ok: false, error: "PLAYBACK_FAILED", message: "当前歌曲暂不可播放" });
     });
     return true;
   }
   if (message.type === MessageType.PLAY) {
     audio.play().then(() => sendResponse({ ok: true })).catch((error) => {
       console.error("Audio resume failed", error);
-      sendResponse({ ok: false, error: "PLAYBACK_FAILED" });
+      sendResponse({ ok: false, error: "PLAYBACK_FAILED", message: "当前歌曲暂不可播放" });
     });
     return true;
   }
