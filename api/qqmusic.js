@@ -182,15 +182,32 @@ export async function getPlaylistDetail(playlist, credential) {
   return { title: data?.dirinfo?.title || playlist.title, songs: (data?.songlist || []).map(normalizeSong) };
 }
 
-async function searchWithSmartbox(keyword) {
+async function searchWithSmartbox(keyword, credential) {
   const url = new URL("https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg");
   url.searchParams.set("key", keyword);
   url.searchParams.set("format", "json");
   const response = await fetch(url, { credentials: "include" });
   if (!response.ok) throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { status: response.status });
   const data = await response.json();
+  const briefSongs = (data?.data?.song?.itemlist || []).map(normalizeSong).filter((song) => song.mid);
+  const songs = await Promise.all(briefSongs.map(async (song) => {
+    try {
+      const detailResponse = await musicu({
+        req_0: {
+          module: "music.pf_song_detail_svr",
+          method: "get_song_detail_yqq",
+          param: { song_mid: song.mid }
+        }
+      }, credential);
+      const detail = checkResponse(detailResponse.req_0, "song-detail");
+      return normalizeSong(detail?.track_info || song);
+    } catch (error) {
+      console.warn("QQ Music song detail lookup failed", song.mid, error);
+      return song;
+    }
+  }));
   return {
-    songs: (data?.data?.song?.itemlist || []).map(normalizeSong).filter((song) => song.mid),
+    songs,
     singers: (data?.data?.singer?.itemlist || []).map(normalizeSinger).filter((singer) => singer.mid)
   };
 }
@@ -208,9 +225,9 @@ export async function searchSongs(keyword, credential) {
     quickResponse = await fetch(url, { credentials: "include" });
   } catch (error) {
     console.error("QQ Music search failed", error);
-    return searchWithSmartbox(keyword);
+    return searchWithSmartbox(keyword, credential);
   }
-  if (!quickResponse.ok) return searchWithSmartbox(keyword);
+  if (!quickResponse.ok) return searchWithSmartbox(keyword, credential);
   const data = await quickResponse.json();
   if (Number(data?.code) !== 0) {
     console.error("QQ Music search returned error", data?.code);
