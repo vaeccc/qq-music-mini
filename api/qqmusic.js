@@ -182,27 +182,41 @@ export async function getPlaylistDetail(playlist, credential) {
   return { title: data?.dirinfo?.title || playlist.title, songs: (data?.songlist || []).map(normalizeSong) };
 }
 
+async function searchWithSmartbox(keyword) {
+  const url = new URL("https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg");
+  url.searchParams.set("key", keyword);
+  url.searchParams.set("format", "json");
+  const response = await fetch(url, { credentials: "include" });
+  if (!response.ok) throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { status: response.status });
+  const data = await response.json();
+  return {
+    songs: (data?.data?.song?.itemlist || []).map(normalizeSong).filter((song) => song.mid),
+    singers: (data?.data?.singer?.itemlist || []).map(normalizeSinger).filter((singer) => singer.mid)
+  };
+}
+
 export async function searchSongs(keyword, credential) {
   const url = new URL("https://c.y.qq.com/soso/fcgi-bin/client_search_cp");
   Object.entries({
-    p: 1, n: 20, w: keyword, format: "json", new_json: 1, cr: 1, g_tk: hash33(credential?.musickey || ""),
-    loginUin: credential?.musicid || 0, hostUin: 0, t: 0, aggr: 1, inCharset: "utf8", outCharset: "utf-8",
-    notice: 0, platform: "yqq.json", needNewCode: 0
+    p: 1, n: 20, w: keyword, catZhida: 1, remoteplace: "txt.yqq.song", format: "json", cr: 1,
+    g_tk: hash33(credential?.musickey || ""), loginUin: credential?.musicid || 0, hostUin: 0,
+    t: 0, aggr: 1, lossless: 0, flag_qc: 0, ct: 24, qqmusic_ver: 1298,
+    inCharset: "utf8", outCharset: "utf-8", notice: 0, platform: "yqq.json", needNewCode: 0
   }).forEach(([key, value]) => url.searchParams.set(key, String(value)));
   let quickResponse;
   try {
     quickResponse = await fetch(url, { credentials: "include" });
   } catch (error) {
     console.error("QQ Music search failed", error);
-    throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败");
+    return searchWithSmartbox(keyword);
   }
-  if (!quickResponse.ok) throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { status: quickResponse.status });
+  if (!quickResponse.ok) return searchWithSmartbox(keyword);
   const data = await quickResponse.json();
   if (Number(data?.code) !== 0) {
     console.error("QQ Music search returned error", data?.code);
     throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { code: data?.code });
   }
-  const songs = (data?.data?.song?.list || []).map(normalizeSong).filter((song) => song.mid);
+  const songs = (data?.data?.song?.list || data?.song?.list || []).map(normalizeSong).filter((song) => song.mid);
   let singers = [];
   try {
     const singerUrl = new URL("https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg");
