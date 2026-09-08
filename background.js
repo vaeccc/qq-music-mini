@@ -95,6 +95,8 @@ async function move(offset) {
 
 async function resumeCurrentSong() {
   await initialize();
+  // A second press after an audio error is an intentional request to skip it.
+  if (playerState.errorMessage) return move(1);
   const playback = await sendToPlayer({ type: MessageType.GET_PLAYBACK_STATUS });
   if (playback?.hasSource) return sendToPlayer({ type: MessageType.PLAY });
   if (!playerState.currentSong || playerState.currentIndex < 0) {
