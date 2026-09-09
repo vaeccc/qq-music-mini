@@ -70,11 +70,21 @@ async function playQueueSong(queue, index) {
   if (!Array.isArray(queue) || index < 0 || index >= queue.length) return { ok: false, error: "INVALID_QUEUE" };
   const requestId = ++playRequestId;
   const song = queue[index];
-  const credential = await requireCredential();
-  const playUrl = song.playUrl || await getPlayUrl(song, credential);
-  if (requestId !== playRequestId) return { ok: true, discarded: true };
   playerState = { queue, currentIndex: index, currentSong: song, playing: false, errorMessage: "" };
   await publishState();
+  let playUrl;
+  try {
+    const credential = await requireCredential();
+    playUrl = song.playUrl || await getPlayUrl(song, credential);
+  } catch (error) {
+    if (requestId === playRequestId) {
+      playerState.playing = false;
+      playerState.errorMessage = error instanceof QQMusicError ? error.message : "当前歌曲暂不可播放";
+      await publishState();
+    }
+    throw error;
+  }
+  if (requestId !== playRequestId) return { ok: true, discarded: true };
   const result = await sendToPlayer({ type: MessageType.PLAY_SONG, url: playUrl });
   if (!result?.ok) {
     playerState.playing = false;
