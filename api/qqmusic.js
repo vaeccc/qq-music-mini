@@ -206,10 +206,18 @@ async function searchWithSmartbox(keyword, credential) {
       return song;
     }
   }));
-  return {
-    songs,
-    singers: (data?.data?.singer?.itemlist || []).map(normalizeSinger).filter((singer) => singer.mid)
-  };
+  const singers = (data?.data?.singer?.itemlist || []).map(normalizeSinger).filter((singer) => singer.mid);
+  const normalizedKeyword = keyword.replace(/\s+/g, "").toLowerCase();
+  const exactSinger = singers.find((singer) => singer.name.replace(/\s+/g, "").toLowerCase() === normalizedKeyword);
+  if (exactSinger) {
+    try {
+      const singerSongs = await getSingerSongs(exactSinger, credential);
+      if (singerSongs.songs.length) return { songs: singerSongs.songs, singers };
+    } catch (error) {
+      console.warn("QQ Music exact singer search failed", exactSinger.mid, error);
+    }
+  }
+  return { songs, singers };
 }
 
 export async function searchSongs(keyword, credential) {
