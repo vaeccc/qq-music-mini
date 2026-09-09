@@ -13,18 +13,18 @@ function showMusicView() { elements.login.hidden = true; elements.music.hidden =
 function setCover(node, url) { node.style.backgroundImage = url ? `url("${url}")` : ""; node.innerHTML = url ? "" : icon("note"); }
 function renderPlayer(player) { state.player = player; const song = player?.currentSong; elements.playerTitle.textContent = song?.title || "暂无播放歌曲"; elements.playerArtist.textContent = song?.artist || ""; setCover(elements.playerCover, song?.cover); elements.toggle.innerHTML = icon(player?.playing ? "pause" : "play"); elements.toggle.setAttribute("aria-label", player?.playing ? "暂停" : "播放"); if (player?.errorMessage) showNotice(player.errorMessage); }
 
-function makeSongRow(song, queue) {
+function makeSongRow(song, queue, index) {
   const row = document.createElement("button"); row.className = "song-row";
   const cover = document.createElement("span"); cover.className = "cover"; setCover(cover, song.cover);
   const info = document.createElement("span"); info.className = "song-info";
   const title = document.createElement("strong"); title.textContent = song.title;
   const sub = document.createElement("span"); sub.textContent = [song.artist, song.album].filter(Boolean).join(" · ");
   info.append(title, sub); row.append(cover, info);
-  row.addEventListener("click", async () => playSong(queue, queue.indexOf(song)));
+  row.addEventListener("click", async () => playSong(queue, index));
   return row;
 }
 async function playSong(queue, index) { showNotice(); const result = await message(MessageType.PLAY_SONG, { queue, index }); if (!result.ok) showNotice(result.message || "播放地址获取失败"); }
-function renderSongs(songs, emptyText) { const list = document.createElement("div"); list.className = "list"; if (!songs.length) { const empty = document.createElement("p"); empty.className = "empty"; empty.textContent = emptyText; list.append(empty); return list; } songs.forEach((song) => list.append(makeSongRow(song, songs))); return list; }
+function renderSongs(songs, emptyText) { const list = document.createElement("div"); list.className = "list"; if (!songs.length) { const empty = document.createElement("p"); empty.className = "empty"; empty.textContent = emptyText; list.append(empty); return list; } songs.forEach((song, index) => list.append(makeSongRow(song, songs, index))); return list; }
 function renderLiked() { clear(elements.content); elements.content.append(renderSongs(state.library?.liked || [], "还没有喜欢的歌曲")); }
 function renderPlaylists() {
   clear(elements.content); const list = document.createElement("div"); list.className = "list"; const playlists = state.library?.playlists || [];

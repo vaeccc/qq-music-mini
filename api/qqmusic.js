@@ -189,23 +189,8 @@ async function searchWithSmartbox(keyword, credential) {
   const response = await fetch(url, { credentials: "include" });
   if (!response.ok) throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { status: response.status });
   const data = await response.json();
+  if (Number(data?.code) !== 0) throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { code: data?.code });
   const briefSongs = (data?.data?.song?.itemlist || []).map(normalizeSong).filter((song) => song.mid);
-  const songs = await Promise.all(briefSongs.map(async (song) => {
-    try {
-      const detailResponse = await musicu({
-        req_0: {
-          module: "music.pf_song_detail_svr",
-          method: "get_song_detail_yqq",
-          param: { song_mid: song.mid }
-        }
-      }, credential);
-      const detail = checkResponse(detailResponse.req_0, "song-detail");
-      return normalizeSong(detail?.track_info || song);
-    } catch (error) {
-      console.warn("QQ Music song detail lookup failed", song.mid, error);
-      return song;
-    }
-  }));
   const singers = (data?.data?.singer?.itemlist || []).map(normalizeSinger).filter((singer) => singer.mid);
   const normalizedKeyword = keyword.replace(/\s+/g, "").toLowerCase();
   const exactSinger = singers.find((singer) => singer.name.replace(/\s+/g, "").toLowerCase() === normalizedKeyword);
@@ -223,6 +208,22 @@ async function searchWithSmartbox(keyword, credential) {
       console.warn("QQ Music exact singer search failed", exactSinger.mid, error);
     }
   }
+  const songs = await Promise.all(briefSongs.map(async (song) => {
+    try {
+      const detailResponse = await musicu({
+        req_0: {
+          module: "music.pf_song_detail_svr",
+          method: "get_song_detail_yqq",
+          param: { song_mid: song.mid }
+        }
+      }, credential);
+      const detail = checkResponse(detailResponse.req_0, "song-detail");
+      return normalizeSong(detail?.track_info || song);
+    } catch (error) {
+      console.warn("QQ Music song detail lookup failed", song.mid, error);
+      return song;
+    }
+  }));
   return { songs, singers };
 }
 
@@ -234,35 +235,35 @@ export async function searchSongs(keyword, credential) {
     t: 0, aggr: 1, lossless: 0, flag_qc: 0, ct: 24, qqmusic_ver: 1298,
     inCharset: "utf8", outCharset: "utf-8", notice: 0, platform: "yqq.json", needNewCode: 0
   }).forEach(([key, value]) => url.searchParams.set(key, String(value)));
-  let quickResponse;
   try {
-    quickResponse = await fetch(url, { credentials: "include" });
+    const quickResponse = await fetch(url, { credentials: "include" });
+    if (!quickResponse.ok) return searchWithSmartbox(keyword, credential);
+    const data = await quickResponse.json();
+    if (Number(data?.code) !== 0) {
+      console.error("QQ Music search returned error", data?.code);
+      return searchWithSmartbox(keyword, credential);
+    }
+    const songs = (data?.data?.song?.list || data?.song?.list || []).map(normalizeSong).filter((song) => song.mid);
+    if (!songs.length) return searchWithSmartbox(keyword, credential);
+    let singers = [];
+    try {
+      const singerUrl = new URL("https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg");
+      singerUrl.searchParams.set("key", keyword);
+      singerUrl.searchParams.set("format", "json");
+      const singerResponse = await fetch(singerUrl, { credentials: "include" });
+      if (singerResponse.ok) {
+        const singerData = await singerResponse.json();
+        singers = (singerData?.data?.singer?.itemlist || []).map(normalizeSinger).filter((singer) => singer.mid);
+      }
+    } catch (error) {
+      // Singer suggestions enhance ordinary song search, but must not block it.
+      console.warn("QQ Music singer suggestions failed", error);
+    }
+    return { songs, singers };
   } catch (error) {
     console.error("QQ Music search failed", error);
     return searchWithSmartbox(keyword, credential);
   }
-  if (!quickResponse.ok) return searchWithSmartbox(keyword, credential);
-  const data = await quickResponse.json();
-  if (Number(data?.code) !== 0) {
-    console.error("QQ Music search returned error", data?.code);
-    throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { code: data?.code });
-  }
-  const songs = (data?.data?.song?.list || data?.song?.list || []).map(normalizeSong).filter((song) => song.mid);
-  let singers = [];
-  try {
-    const singerUrl = new URL("https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg");
-    singerUrl.searchParams.set("key", keyword);
-    singerUrl.searchParams.set("format", "json");
-    const singerResponse = await fetch(singerUrl, { credentials: "include" });
-    if (singerResponse.ok) {
-      const singerData = await singerResponse.json();
-      singers = (singerData?.data?.singer?.itemlist || []).map(normalizeSinger).filter((singer) => singer.mid);
-    }
-  } catch (error) {
-    // Singer suggestions enhance ordinary song search, but must not block it.
-    console.warn("QQ Music singer suggestions failed", error);
-  }
-  return { songs, singers };
 }
 
 export async function getSingerSongs(singer, credential, begin = 0) {
