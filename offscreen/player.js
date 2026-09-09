@@ -3,6 +3,7 @@ import { MessageType, PlayerEvent } from "../api/types.js";
 const audio = new Audio();
 audio.preload = "auto";
 const mediaSession = navigator.mediaSession;
+let activePlaybackId = 0;
 
 function sendMediaAction(action) {
   chrome.runtime.sendMessage({ type: MessageType.MEDIA_SESSION_ACTION, target: "background", action }).catch(() => undefined);
@@ -32,6 +33,7 @@ function notify(event, detail = {}) {
     type: MessageType.PLAYER_EVENT,
     target: "background",
     event,
+    playbackId: activePlaybackId,
     ...detail
   }).catch(() => undefined);
 }
@@ -47,6 +49,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.target !== "offscreen") return;
 
   if (message.type === MessageType.PLAY_SONG) {
+    activePlaybackId = Number(message.playbackId) || activePlaybackId + 1;
     audio.src = message.url;
     audio.play().then(() => sendResponse({ ok: true })).catch((error) => {
       console.error("Audio playback failed", error);

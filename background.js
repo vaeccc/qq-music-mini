@@ -81,15 +81,17 @@ async function playQueueSong(queue, index) {
       playerState.playing = false;
       playerState.errorMessage = error instanceof QQMusicError ? error.message : "当前歌曲暂不可播放";
       await publishState();
+      if (index + 1 < queue.length) return playQueueSong(queue, index + 1);
     }
     throw error;
   }
   if (requestId !== playRequestId) return { ok: true, discarded: true };
-  const result = await sendToPlayer({ type: MessageType.PLAY_SONG, url: playUrl });
+  const result = await sendToPlayer({ type: MessageType.PLAY_SONG, url: playUrl, playbackId: requestId });
   if (!result?.ok) {
     playerState.playing = false;
     playerState.errorMessage = "当前歌曲暂不可播放";
     await publishState();
+    if (index + 1 < queue.length) return playQueueSong(queue, index + 1);
     return result || { ok: false, error: "PLAYBACK_FAILED" };
   }
   return { ok: true, state: playerState };
@@ -132,11 +134,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     await initialize();
     if (message.target === "background" && message.type === MessageType.PLAYER_EVENT) {
+      if (message.playbackId && message.playbackId !== playRequestId) {
+        sendResponse({ ok: true, discarded: true });
+        return;
+      }
       if (message.event === PlayerEvent.PLAYING) playerState.playing = true;
       if (message.event === PlayerEvent.PAUSED || message.event === PlayerEvent.ERROR || message.event === PlayerEvent.ENDED) playerState.playing = false;
       if (message.event === PlayerEvent.ERROR) playerState.errorMessage = "当前歌曲暂不可播放";
       await publishState();
-      if (message.event === PlayerEvent.ENDED) await move(1);
+      if (message.event === PlayerEvent.ENDED || message.event === PlayerEvent.ERROR) await move(1);
       sendResponse({ ok: true });
       return;
     }
