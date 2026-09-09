@@ -1,7 +1,7 @@
 import { MessageType } from "../api/types.js";
 import { icon } from "./icons.js";
 
-const state = { tab: "liked", library: null, searchKeyword: "", searchResults: [], singerResults: [], detail: null, singerDetail: null, player: null, poll: null, viewRequestId: 0 };
+const state = { tab: "liked", library: null, searchKeyword: "", searchResults: [], singerResults: [], searchPaging: null, detail: null, singerDetail: null, player: null, poll: null, viewRequestId: 0 };
 const elements = {
   notice: document.querySelector("#notice"), login: document.querySelector("#login-view"), music: document.querySelector("#music-view"), qr: document.querySelector("#qr-panel"), qrImage: document.querySelector("#qr-image"), qrStatus: document.querySelector("#qr-status"), content: document.querySelector("#content"), playerTitle: document.querySelector("#player-title"), playerArtist: document.querySelector("#player-artist"), playerCover: document.querySelector("#player-cover"), toggle: document.querySelector("#toggle-button")
 };
@@ -56,13 +56,30 @@ async function loadMoreSingerSongs() {
   renderSingerDetail(scrollTop);
 }
 function renderSingerDetail(scrollTop = 0) { const detail = state.singerDetail; clear(elements.content); const header = document.createElement("div"); header.className = "detail-header"; const back = document.createElement("button"); back.innerHTML = icon("back"); back.setAttribute("aria-label", "返回搜索结果"); back.addEventListener("click", () => { state.singerDetail = null; renderSearch(); }); const title = document.createElement("strong"); title.textContent = detail.title; header.append(back, title); const status = document.createElement("p"); status.className = "load-more"; status.textContent = detail.loadingMore ? "正在加载更多歌曲…" : detail.complete ? `已加载全部 ${detail.songs.length} 首歌曲` : `已加载 ${detail.songs.length}${detail.total ? ` / ${detail.total}` : ""} 首，继续下滑加载更多`; elements.content.append(header, renderSongs(detail.songs, "该歌手暂无可播放歌曲"), status); elements.content.scrollTop = scrollTop; elements.content.addEventListener("scroll", () => { if (elements.content.scrollTop + elements.content.clientHeight >= elements.content.scrollHeight - 80) loadMoreSingerSongs(); }); }
-function renderSearch() {
+async function loadMoreSearchSongs() {
+  const paging = state.searchPaging;
+  if (!paging || paging.loadingMore || paging.complete) return;
+  paging.loadingMore = true; const scrollTop = elements.content.scrollTop; renderSearch(scrollTop);
+  const result = await message(MessageType.GET_SINGER_SONGS, { singer: paging.singer, begin: state.searchResults.length });
+  if (state.searchPaging !== paging) return;
+  paging.loadingMore = false;
+  if (!result.ok) { showNotice(result.message || "加载更多歌曲失败"); renderSearch(scrollTop); return; }
+  const known = new Set(state.searchResults.map((song) => song.mid));
+  const added = (result.singer.songs || []).filter((song) => !known.has(song.mid));
+  state.searchResults.push(...added); paging.total = result.singer.total || paging.total;
+  paging.complete = !added.length || (paging.total > 0 && state.searchResults.length >= paging.total);
+  renderSearch(scrollTop);
+}
+function renderSearch(scrollTop = 0) {
   clear(elements.content); const form = document.createElement("form"); form.className = "search-form"; const input = document.createElement("input"); input.placeholder = "搜索歌曲或歌手"; input.value = state.searchKeyword; input.setAttribute("aria-label", "搜索歌曲或歌手"); const submit = document.createElement("button"); submit.textContent = "搜索"; form.append(input, submit);
-  form.addEventListener("submit", async (event) => { event.preventDefault(); const keyword = input.value.trim(); if (!keyword) return; showNotice("正在搜索…", "info"); const result = await message(MessageType.SEARCH_SONGS, { keyword }); if (!result.ok) { showNotice(result.message || "网络请求失败"); return; } showNotice(); state.searchKeyword = keyword; state.searchResults = result.songs || []; state.singerResults = result.singers || []; state.singerDetail = null; renderSearch(); });
+  form.addEventListener("submit", async (event) => { event.preventDefault(); const keyword = input.value.trim(); if (!keyword) return; showNotice("正在搜索…", "info"); const result = await message(MessageType.SEARCH_SONGS, { keyword }); if (!result.ok) { showNotice(result.message || "网络请求失败"); return; } showNotice(); state.searchKeyword = keyword; state.searchResults = result.songs || []; state.singerResults = result.singers || []; state.searchPaging = result.searchPaging ? { ...result.searchPaging, loadingMore: false, complete: !result.songs.length || (result.searchPaging.total > 0 && result.songs.length >= result.searchPaging.total) } : null; state.singerDetail = null; renderSearch(); });
   elements.content.append(form);
   if (!state.searchKeyword) { elements.content.append(renderSongs([], "输入关键词搜索歌曲或歌手")); return; }
   if (state.singerResults.length) { const singerSection = document.createElement("section"); const heading = document.createElement("h2"); heading.className = "result-section-title"; heading.textContent = "歌手"; const list = document.createElement("div"); list.className = "list"; state.singerResults.forEach((singer) => list.append(makeSingerRow(singer))); singerSection.append(heading, list); elements.content.append(singerSection); }
-  const songSection = document.createElement("section"); const heading = document.createElement("h2"); heading.className = "result-section-title"; heading.textContent = "歌曲"; songSection.append(heading, renderSongs(state.searchResults, "没有找到相关歌曲")); elements.content.append(songSection);
+  const songSection = document.createElement("section"); const heading = document.createElement("h2"); heading.className = "result-section-title"; heading.textContent = "歌曲"; songSection.append(heading, renderSongs(state.searchResults, "没有找到相关歌曲"));
+  if (state.searchPaging) { const status = document.createElement("p"); status.className = "load-more"; status.textContent = state.searchPaging.loadingMore ? "正在加载更多歌曲…" : state.searchPaging.complete ? `已加载全部 ${state.searchResults.length} 首歌曲` : `已加载 ${state.searchResults.length}${state.searchPaging.total ? ` / ${state.searchPaging.total}` : ""} 首，继续下滑加载更多`; songSection.append(status); }
+  elements.content.append(songSection); elements.content.scrollTop = scrollTop;
+  if (state.searchPaging) elements.content.addEventListener("scroll", () => { if (elements.content.scrollTop + elements.content.clientHeight >= elements.content.scrollHeight - 80) loadMoreSearchSongs(); });
 }
 function renderTab() { document.querySelectorAll(".nav-button").forEach((button) => button.classList.toggle("active", button.dataset.tab === state.tab)); if (state.tab === "liked") renderLiked(); if (state.tab === "playlists") renderPlaylists(); if (state.tab === "search") renderSearch(); }
 async function loadLibrary() { const result = await message(MessageType.GET_LIBRARY); if (!result.ok) throw result; state.library = result.library; renderTab(); }

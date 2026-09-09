@@ -212,7 +212,13 @@ async function searchWithSmartbox(keyword, credential) {
   if (exactSinger) {
     try {
       const singerSongs = await getSingerSongs(exactSinger, credential);
-      if (singerSongs.songs.length) return { songs: singerSongs.songs, singers };
+      if (singerSongs.songs.length) {
+        return {
+          songs: singerSongs.songs,
+          singers,
+          searchPaging: { singer: exactSinger, total: singerSongs.total }
+        };
+      }
     } catch (error) {
       console.warn("QQ Music exact singer search failed", exactSinger.mid, error);
     }
