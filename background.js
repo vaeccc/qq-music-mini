@@ -134,6 +134,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     await initialize();
     if (message.target === "background" && message.type === MessageType.PLAYER_EVENT) {
+      // The service worker can restart while the offscreen audio element keeps
+      // playing. Adopt its first event after a restart, but ignore late events
+      // once this worker has started a newer track.
+      if (message.playbackId && playRequestId === 0) playRequestId = message.playbackId;
       if (message.playbackId && message.playbackId !== playRequestId) {
         sendResponse({ ok: true, discarded: true });
         return;
