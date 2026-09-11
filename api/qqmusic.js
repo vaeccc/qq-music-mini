@@ -2,6 +2,7 @@ import { ErrorCode } from "./types.js";
 
 const MUSICU = "https://u.y.qq.com/cgi-bin/musicu.fcg";
 const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const PRIMARY_SEARCH_TIMEOUT_MS = 2200;
 
 export class QQMusicError extends Error {
   constructor(code, message, detail = {}) {
@@ -236,7 +237,7 @@ export async function searchSongs(keyword, credential) {
     inCharset: "utf8", outCharset: "utf-8", notice: 0, platform: "yqq.json", needNewCode: 0
   }).forEach(([key, value]) => url.searchParams.set(key, String(value)));
   try {
-    const quickResponse = await fetch(url, { credentials: "include" });
+    const quickResponse = await fetch(url, { credentials: "include", signal: AbortSignal.timeout(PRIMARY_SEARCH_TIMEOUT_MS) });
     if (!quickResponse.ok) return searchWithSmartbox(keyword, credential);
     const data = await quickResponse.json();
     if (Number(data?.code) !== 0) {
