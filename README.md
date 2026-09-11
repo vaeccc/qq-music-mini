@@ -18,7 +18,7 @@
 
 ## 安装
 
-当前项目以“加载已解压的扩展程序”的方式使用：
+当前项目可以通过“加载已解压的扩展程序”方式测试：
 
 1. 下载或克隆本仓库。
 2. 打开扩展管理页：Chrome 为 `chrome://extensions`，Edge 为 `edge://extensions`。
@@ -40,10 +40,12 @@
 
 - 界面运行在 Popup 中；播放队列和状态由 Manifest V3 Service Worker 管理。
 - 实际音频播放在扩展的 Offscreen Document 中完成，因此 Popup 关闭后音乐仍会继续。
-- 扩展会直接访问 QQ 音乐域名以完成登录、读取曲库、搜索和获取一次性的播放地址；不依赖公开部署的第三方 API 服务。
+- 扩展会直接访问 QQ / QQ 音乐相关域名以完成登录、读取曲库、搜索和获取一次性的播放地址；不依赖公开部署的第三方 API 服务。
 - 二维码登录凭据仅保存在当前浏览器的 `chrome.storage.local` 中。扩展不读取或保存 QQ 密码，也不将凭据上传到开发者服务器。
 - 播放地址不会持久化；每次切歌都会重新请求。
 - 无法取得授权播放地址时，扩展会提示对应原因；不会尝试绕过会员、数字专辑、地区或版权限制。
+
+完整隐私政策见：[PRIVACY.md](./PRIVACY.md)。
 
 ## 开发
 
@@ -57,6 +59,24 @@ popup/                 扩展界面、样式与控制图标
 storage/               chrome.storage.local 封装
 icons/                 扩展图标资源
 ```
+
+## 商店打包
+
+Windows PowerShell 下运行：
+
+```powershell
+./scripts/package-store.ps1
+```
+
+脚本会读取 `manifest.json` 中的版本号，并生成：
+
+```text
+dist/qq-music-mini-<version>-store.zip
+```
+
+ZIP 根目录直接包含 `manifest.json`，只打包扩展运行所需文件，不包含 README、开发脚本或 Git 元数据。
+
+Chrome Web Store / Microsoft Edge Add-ons 的文案、权限用途、审核测试说明见：[STORE_SUBMISSION.md](./STORE_SUBMISSION.md)。
 
 ## 已知限制
 

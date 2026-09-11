@@ -5,9 +5,13 @@
   "description": "极简 QQ 音乐浏览器播放器。",
   "permissions": ["storage", "offscreen", "cookies"],
   "host_permissions": [
-    "https://*.y.qq.com/*",
-    "https://*.qq.com/*",
-    "https://*.weixin.qq.com/*"
+    "https://ssl.ptlogin2.qq.com/*",
+    "https://ssl.ptlogin2.graph.qq.com/*",
+    "https://graph.qq.com/*",
+    "https://u.y.qq.com/*",
+    "https://c.y.qq.com/*",
+    "https://y.gtimg.cn/*",
+    "https://dl.stream.qqmusic.qq.com/*"
   ],
   "background": {
     "service_worker": "background.js",
