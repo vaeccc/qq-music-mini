@@ -3,6 +3,7 @@ export const MessageType = Object.freeze({
   PLAY: "PLAY",
   PAUSE: "PAUSE",
   SEEK: "SEEK",
+  SET_PLAY_MODE: "SET_PLAY_MODE",
   PREVIOUS: "PREVIOUS",
   NEXT: "NEXT",
   GET_PLAYER_STATE: "GET_PLAYER_STATE",
@@ -37,6 +38,12 @@ export const ErrorCode = Object.freeze({
   PLAY_URL: "PLAY_URL"
 });
 
+export const PlaybackMode = Object.freeze({
+  ORDER: "order",
+  REPEAT_ONE: "repeat-one",
+  SHUFFLE: "shuffle"
+});
+
 export function emptyPlayerState() {
-  return { queue: [], currentIndex: -1, currentSong: null, playing: false, currentTime: 0, duration: 0 };
+  return { queue: [], currentIndex: -1, currentSong: null, playing: false, currentTime: 0, duration: 0, playMode: PlaybackMode.ORDER };
 }

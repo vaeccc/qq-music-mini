@@ -1,4 +1,4 @@
-import { MessageType, PlayerEvent, emptyPlayerState } from "./api/types.js";
+import { MessageType, PlaybackMode, PlayerEvent, emptyPlayerState } from "./api/types.js";
 import { applyBrandIcon } from "./api/brand-icon.js";
 import { clearCredential, getCredential, getPlayerState, setCredential, setPlayerState } from "./storage/store.js";
 import { createQrLogin, pollQrLogin } from "./api/auth.js";
@@ -28,7 +28,8 @@ async function ensureOffscreenDocument() {
 
 async function initialize() {
   if (initialized) return;
-  playerState = (await getPlayerState()) || emptyPlayerState();
+  playerState = { ...emptyPlayerState(), ...((await getPlayerState()) || {}) };
+  if (!Object.values(PlaybackMode).includes(playerState.playMode)) playerState.playMode = PlaybackMode.ORDER;
   // Audio URLs are intentionally never persisted, so a browser restart restores the queue as paused.
   playerState.playing = false;
   initialized = true;
@@ -65,12 +66,27 @@ async function sendToPlayer(message) {
   return chrome.runtime.sendMessage({ ...message, target: "offscreen" });
 }
 
-async function playQueueSong(queue, index) {
+function getNextQueueIndex(queue, currentIndex, offset, { automatic = false, failed = false, excluded = new Set() } = {}) {
+  if (!queue.length) return -1;
+  if (playerState.playMode === PlaybackMode.REPEAT_ONE && automatic && !failed && !excluded.has(currentIndex)) return currentIndex;
+  if (playerState.playMode === PlaybackMode.SHUFFLE) {
+    const candidates = queue.map((_, index) => index).filter((index) => index !== currentIndex && !excluded.has(index));
+    if (candidates.length) return candidates[Math.floor(Math.random() * candidates.length)];
+    return automatic && !failed && !excluded.has(currentIndex) ? currentIndex : -1;
+  }
+  const direction = offset < 0 ? -1 : 1;
+  for (let index = currentIndex + direction; index >= 0 && index < queue.length; index += direction) {
+    if (!excluded.has(index)) return index;
+  }
+  return -1;
+}
+
+async function playQueueSong(queue, index, excluded = new Set()) {
   await initialize();
   if (!Array.isArray(queue) || index < 0 || index >= queue.length) return { ok: false, error: "INVALID_QUEUE" };
   const requestId = ++playRequestId;
   const song = queue[index];
-  playerState = { queue, currentIndex: index, currentSong: song, playing: false, currentTime: 0, duration: 0, errorMessage: "" };
+  playerState = { queue, currentIndex: index, currentSong: song, playing: false, currentTime: 0, duration: 0, playMode: playerState.playMode || PlaybackMode.ORDER, errorMessage: "" };
   await publishState();
   let playUrl;
   try {
@@ -81,7 +97,9 @@ async function playQueueSong(queue, index) {
       playerState.playing = false;
       playerState.errorMessage = error instanceof QQMusicError ? error.message : "当前歌曲暂不可播放";
       await publishState();
-      if (index + 1 < queue.length) return playQueueSong(queue, index + 1);
+      excluded.add(index);
+      const nextIndex = getNextQueueIndex(queue, index, 1, { failed: true, excluded });
+      if (nextIndex >= 0) return playQueueSong(queue, nextIndex, excluded);
     }
     throw error;
   }
@@ -91,7 +109,9 @@ async function playQueueSong(queue, index) {
     playerState.playing = false;
     playerState.errorMessage = "当前歌曲暂不可播放";
     await publishState();
-    if (index + 1 < queue.length) return playQueueSong(queue, index + 1);
+    excluded.add(index);
+    const nextIndex = getNextQueueIndex(queue, index, 1, { failed: true, excluded });
+    if (nextIndex >= 0) return playQueueSong(queue, nextIndex, excluded);
     return result || { ok: false, error: "PLAYBACK_FAILED" };
   }
   return { ok: true, state: playerState };
@@ -103,11 +123,12 @@ function serializeError(error) {
   return { ok: false, error: "NETWORK", message: "网络请求失败" };
 }
 
-async function move(offset) {
+async function move(offset, options = {}) {
   await initialize();
-  const nextIndex = playerState.currentIndex + offset;
-  if (nextIndex < 0 || nextIndex >= playerState.queue.length) return { ok: true, state: playerState };
-  return playQueueSong(playerState.queue, nextIndex);
+  const excluded = options.excluded || new Set();
+  const nextIndex = getNextQueueIndex(playerState.queue, playerState.currentIndex, offset, { ...options, excluded });
+  if (nextIndex < 0) return { ok: true, state: playerState };
+  return playQueueSong(playerState.queue, nextIndex, excluded);
 }
 
 async function resumeCurrentSong() {
@@ -153,7 +174,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.event === PlayerEvent.PAUSED || message.event === PlayerEvent.ERROR || message.event === PlayerEvent.ENDED) playerState.playing = false;
       if (message.event === PlayerEvent.ERROR) playerState.errorMessage = "当前歌曲暂不可播放";
       await publishState();
-      if (message.event === PlayerEvent.ENDED || message.event === PlayerEvent.ERROR) await move(1);
+      if (message.event === PlayerEvent.ENDED) await move(1, { automatic: true });
+      if (message.event === PlayerEvent.ERROR) await move(1, { failed: true, excluded: new Set([playerState.currentIndex]) });
       sendResponse({ ok: true });
       return;
     }
@@ -248,6 +270,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         chrome.runtime.sendMessage({ type: MessageType.PLAYER_STATE_CHANGED, state: playerState }).catch(() => undefined);
       }
       sendResponse(result);
+      return;
+    }
+    if (message.type === MessageType.SET_PLAY_MODE) {
+      if (!Object.values(PlaybackMode).includes(message.mode)) {
+        sendResponse({ ok: false, error: "INVALID_PLAY_MODE", message: "不支持的播放模式" });
+        return;
+      }
+      playerState.playMode = message.mode;
+      await publishState();
+      sendResponse({ ok: true, state: playerState });
       return;
     }
     if (message.type === MessageType.PREVIOUS) {
