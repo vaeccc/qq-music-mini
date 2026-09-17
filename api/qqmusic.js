@@ -147,6 +147,9 @@ export async function getUserLibrary(credential) {
   const user = checkResponse(userResponse.req_0, "user");
   const musicid = Number(valueAt(user, ["musicid", "uin", "user.musicid"], credential.musicid));
   const encryptUin = valueAt(user, ["encrypt_uin", "encryptUin", "user.encrypt_uin"], credential.encryptUin || "");
+  const nickname = valueAt(user, ["nickname", "nick", "name", "user.nickname", "user.nick", "userInfo.nickname"], "QQ 音乐账号");
+  const rawAvatar = valueAt(user, ["avatar", "avatarUrl", "headurl", "headUrl", "picurl", "user.avatar", "user.avatarUrl", "userInfo.avatar"]);
+  const avatar = rawAvatar && String(rawAvatar).startsWith("//") ? `https:${rawAvatar}` : String(rawAvatar || "");
   const response = await musicu({
     req_0: { module: "music.musicasset.PlaylistBaseRead", method: "GetPlaylistByUin", param: { uin: String(musicid) } },
     req_1: {
@@ -159,7 +162,7 @@ export async function getUserLibrary(credential) {
   const likedData = checkResponse(response.req_1, "liked");
   const rawPlaylists = playlistData?.v_playlist || playlistData?.playlist || playlistData?.list || [];
   return {
-    user: { musicid, encryptUin },
+    user: { musicid, encryptUin, nickname, avatar },
     liked: (likedData?.songlist || []).map(normalizeSong),
     playlists: rawPlaylists.map((item) => ({
       id: String(item.tid || item.id || item.dissid || item.dirid || item.dirId),

@@ -5,6 +5,7 @@ audio.preload = "auto";
 const mediaSession = navigator.mediaSession;
 let activePlaybackId = 0;
 let lastProgressAt = 0;
+let suppressEvents = false;
 
 function sendMediaAction(action) {
   chrome.runtime.sendMessage({ type: MessageType.MEDIA_SESSION_ACTION, target: "background", action }).catch(() => undefined);
@@ -47,6 +48,7 @@ function updateMediaSession(song, playing) {
 }
 
 function notify(event, detail = {}) {
+  if (suppressEvents) return;
   chrome.runtime.sendMessage({
     type: MessageType.PLAYER_EVENT,
     target: "background",
@@ -96,6 +98,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.target !== "offscreen") return;
 
   if (message.type === MessageType.PLAY_SONG) {
+    suppressEvents = false;
     activePlaybackId = Number(message.playbackId) || activePlaybackId + 1;
     audio.src = message.url;
     lastProgressAt = 0;
@@ -129,6 +132,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message.type === MessageType.PAUSE) {
     audio.pause();
+    sendResponse({ ok: true });
+  }
+  if (message.type === MessageType.STOP) {
+    suppressEvents = true;
+    activePlaybackId = Number(message.playbackId) || activePlaybackId + 1;
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    updateMediaSession(null, false);
     sendResponse({ ok: true });
   }
   if (message.type === MessageType.SET_MEDIA_SESSION) {

@@ -259,7 +259,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
     if (message.type === MessageType.LOGOUT) {
       await clearCredential();
-      sendResponse({ ok: true });
+      const playMode = playerState.playMode || PlaybackMode.ORDER;
+      const stopRequestId = ++playRequestId;
+      playerState = { ...emptyPlayerState(), playMode };
+      await publishState();
+      try {
+        await sendToPlayer({ type: MessageType.STOP, playbackId: stopRequestId });
+      } catch (error) { console.warn("Player stop during logout failed", error); }
+      sendResponse({ ok: true, state: playerState });
       return;
     }
     if (message.type === MessageType.GET_LIBRARY) {

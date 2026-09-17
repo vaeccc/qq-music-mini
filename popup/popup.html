@@ -8,7 +8,19 @@
   </head>
   <body>
     <main class="app">
-      <header class="header"><span id="brand-mark" class="brand-mark" aria-hidden="true"></span><h1>QQ Music Mini</h1></header>
+      <header class="header">
+        <span id="brand-mark" class="brand-mark" aria-hidden="true"></span><h1>QQ Music Mini</h1>
+        <div id="account-wrap" class="account-wrap" hidden>
+          <button id="account-button" class="account-button" aria-expanded="false">账号</button>
+          <div id="account-menu" class="account-menu" hidden>
+            <div class="account-summary">
+              <span id="account-avatar" class="account-avatar" aria-hidden="true">Q</span>
+              <span class="account-text"><strong id="account-name">QQ 音乐账号</strong><small id="account-id">已登录</small></span>
+            </div>
+            <button id="logout-button" class="logout-button">退出登录</button>
+          </div>
+        </div>
+      </header>
       <p id="notice" class="notice" role="status" hidden></p>
       <section id="login-view" class="login-view" hidden>
         <p>登录后查看你的音乐和歌单。</p>

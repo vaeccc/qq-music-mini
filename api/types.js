@@ -2,6 +2,7 @@ export const MessageType = Object.freeze({
   PLAY_SONG: "PLAY_SONG",
   PLAY: "PLAY",
   PAUSE: "PAUSE",
+  STOP: "STOP",
   SEEK: "SEEK",
   SET_PLAY_MODE: "SET_PLAY_MODE",
   PREVIOUS: "PREVIOUS",
