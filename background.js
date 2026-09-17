@@ -1,4 +1,4 @@
-import { MessageType, PlaybackMode, PlayerEvent, emptyPlayerState } from "./api/types.js";
+import { ErrorCode, MessageType, PlaybackMode, PlayerEvent, emptyPlayerState } from "./api/types.js";
 import { applyBrandIcon } from "./api/brand-icon.js";
 import { clearCredential, getCredential, getPlayerState, setCredential, setPlayerState } from "./storage/store.js";
 import { createQrLogin, pollQrLogin } from "./api/auth.js";
@@ -9,6 +9,21 @@ let initialized = false;
 let loginAttempt = null;
 let offscreenCreating = null;
 let playRequestId = 0;
+const skippablePlaybackErrors = new Set([ErrorCode.NO_PERMISSION, ErrorCode.NO_COPYRIGHT, ErrorCode.PLAY_URL, ErrorCode.PLAYBACK_FAILED]);
+
+function describePlaybackError(error, song, skipped = false) {
+  const title = song?.title ? `《${song.title}》` : "当前歌曲";
+  const messages = {
+    [ErrorCode.LOGIN_EXPIRED]: "QQ 音乐登录已失效，请重新登录",
+    [ErrorCode.NETWORK]: "网络连接失败，请检查网络后重试",
+    [ErrorCode.NO_PERMISSION]: `${title}：当前账号无播放权限`,
+    [ErrorCode.NO_COPYRIGHT]: `${title}：因版权限制暂不可播放`,
+    [ErrorCode.PLAY_URL]: `${title}：播放地址获取失败`,
+    [ErrorCode.PLAYBACK_FAILED]: `${title}：音频加载失败`
+  };
+  const code = error instanceof QQMusicError ? error.code : error?.code || ErrorCode.NETWORK;
+  return { code, message: `${messages[code] || error?.message || "播放失败"}${skipped ? "，已自动跳过" : ""}` };
+}
 
 async function ensureOffscreenDocument() {
   if (offscreenCreating) return offscreenCreating;
@@ -86,7 +101,7 @@ async function playQueueSong(queue, index, excluded = new Set()) {
   if (!Array.isArray(queue) || index < 0 || index >= queue.length) return { ok: false, error: "INVALID_QUEUE" };
   const requestId = ++playRequestId;
   const song = queue[index];
-  playerState = { queue, currentIndex: index, currentSong: song, playing: false, currentTime: 0, duration: 0, playMode: playerState.playMode || PlaybackMode.ORDER, errorMessage: "" };
+  playerState = { queue, currentIndex: index, currentSong: song, playing: false, currentTime: 0, duration: 0, playMode: playerState.playMode || PlaybackMode.ORDER, errorCode: "", errorMessage: "" };
   await publishState();
   let playUrl;
   try {
@@ -94,25 +109,34 @@ async function playQueueSong(queue, index, excluded = new Set()) {
     playUrl = song.playUrl || await getPlayUrl(song, credential);
   } catch (error) {
     if (requestId === playRequestId) {
+      const skippable = error instanceof QQMusicError && skippablePlaybackErrors.has(error.code);
+      let nextIndex = -1;
+      if (skippable) {
+        excluded.add(index);
+        nextIndex = getNextQueueIndex(queue, index, 1, { failed: true, excluded });
+      }
+      const diagnostic = describePlaybackError(error, song, nextIndex >= 0);
       playerState.playing = false;
-      playerState.errorMessage = error instanceof QQMusicError ? error.message : "当前歌曲暂不可播放";
+      playerState.errorCode = diagnostic.code;
+      playerState.errorMessage = diagnostic.message;
       await publishState();
-      excluded.add(index);
-      const nextIndex = getNextQueueIndex(queue, index, 1, { failed: true, excluded });
       if (nextIndex >= 0) return playQueueSong(queue, nextIndex, excluded);
+      throw new QQMusicError(diagnostic.code, diagnostic.message, error?.detail);
     }
     throw error;
   }
   if (requestId !== playRequestId) return { ok: true, discarded: true };
   const result = await sendToPlayer({ type: MessageType.PLAY_SONG, url: playUrl, playbackId: requestId });
   if (!result?.ok) {
-    playerState.playing = false;
-    playerState.errorMessage = "当前歌曲暂不可播放";
-    await publishState();
     excluded.add(index);
     const nextIndex = getNextQueueIndex(queue, index, 1, { failed: true, excluded });
+    const diagnostic = describePlaybackError({ code: ErrorCode.PLAYBACK_FAILED }, song, nextIndex >= 0);
+    playerState.playing = false;
+    playerState.errorCode = diagnostic.code;
+    playerState.errorMessage = diagnostic.message;
+    await publishState();
     if (nextIndex >= 0) return playQueueSong(queue, nextIndex, excluded);
-    return result || { ok: false, error: "PLAYBACK_FAILED" };
+    return { ok: false, error: diagnostic.code, message: diagnostic.message };
   }
   return { ok: true, state: playerState };
 }
@@ -133,14 +157,16 @@ async function move(offset, options = {}) {
 
 async function resumeCurrentSong() {
   await initialize();
-  // A second press after an audio error is an intentional request to skip it.
-  if (playerState.errorMessage) return move(1);
+  // Song-specific failures can be skipped; login and network failures retry the current song.
+  if (playerState.errorMessage && skippablePlaybackErrors.has(playerState.errorCode)) return move(1);
   const playback = await sendToPlayer({ type: MessageType.GET_PLAYBACK_STATUS });
   if (playback?.hasSource) {
     const result = await sendToPlayer({ type: MessageType.PLAY });
     if (!result?.ok) {
+      const diagnostic = describePlaybackError({ code: ErrorCode.PLAYBACK_FAILED }, playerState.currentSong);
       playerState.playing = false;
-      playerState.errorMessage = "当前歌曲暂不可播放";
+      playerState.errorCode = diagnostic.code;
+      playerState.errorMessage = diagnostic.message;
       await publishState();
     }
     return result;
@@ -170,12 +196,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: true });
         return;
       }
+      let errorAdvance = null;
       if (message.event === PlayerEvent.PLAYING) playerState.playing = true;
       if (message.event === PlayerEvent.PAUSED || message.event === PlayerEvent.ERROR || message.event === PlayerEvent.ENDED) playerState.playing = false;
-      if (message.event === PlayerEvent.ERROR) playerState.errorMessage = "当前歌曲暂不可播放";
+      if (message.event === PlayerEvent.ERROR) {
+        const excluded = new Set([playerState.currentIndex]);
+        const nextIndex = getNextQueueIndex(playerState.queue, playerState.currentIndex, 1, { failed: true, excluded });
+        const diagnostic = describePlaybackError({ code: ErrorCode.PLAYBACK_FAILED }, playerState.currentSong, nextIndex >= 0);
+        playerState.errorCode = diagnostic.code;
+        playerState.errorMessage = diagnostic.message;
+        if (nextIndex >= 0) errorAdvance = { nextIndex, excluded };
+      }
       await publishState();
       if (message.event === PlayerEvent.ENDED) await move(1, { automatic: true });
-      if (message.event === PlayerEvent.ERROR) await move(1, { failed: true, excluded: new Set([playerState.currentIndex]) });
+      if (errorAdvance) await playQueueSong(playerState.queue, errorAdvance.nextIndex, errorAdvance.excluded);
       sendResponse({ ok: true });
       return;
     }

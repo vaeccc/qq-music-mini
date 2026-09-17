@@ -35,7 +35,8 @@ export const ErrorCode = Object.freeze({
   NETWORK: "NETWORK",
   NO_PERMISSION: "NO_PERMISSION",
   NO_COPYRIGHT: "NO_COPYRIGHT",
-  PLAY_URL: "PLAY_URL"
+  PLAY_URL: "PLAY_URL",
+  PLAYBACK_FAILED: "PLAYBACK_FAILED"
 });
 
 export const PlaybackMode = Object.freeze({
@@ -45,5 +46,5 @@ export const PlaybackMode = Object.freeze({
 });
 
 export function emptyPlayerState() {
-  return { queue: [], currentIndex: -1, currentSong: null, playing: false, currentTime: 0, duration: 0, playMode: PlaybackMode.ORDER };
+  return { queue: [], currentIndex: -1, currentSong: null, playing: false, currentTime: 0, duration: 0, playMode: PlaybackMode.ORDER, errorCode: "", errorMessage: "" };
 }
