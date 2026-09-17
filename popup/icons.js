@@ -1,15 +1,15 @@
 const paths = Object.freeze({
-  note: '<path d="M14 3v11.2a3.5 3.5 0 1 1-2-3.15V6.4l8-1.7v8.8a3.5 3.5 0 1 1-2-3.15V3.2L14 4Z"/>',
-  previous: '<path d="M6 5v14M18 6v12l-9-6 9-6Z"/>',
-  next: '<path d="M18 5v14M6 6v12l9-6-9-6Z"/>',
-  play: '<path fill="currentColor" stroke="none" d="m9 5.5 10.5 6.5L9 18.5v-13Z"/>',
-  pause: '<path fill="currentColor" stroke="none" d="M7.5 5.5h3.6v13H7.5v-13Zm5.4 0h3.6v13h-3.6v-13Z"/>',
-  order: '<path d="M5 7h11M5 12h14M5 17h11M16 4l3 3-3 3M16 14l3 3-3 3"/>',
-  repeatOne: '<path d="M17 7h1a3 3 0 0 1 3 3v1M7 17H6a3 3 0 0 1-3-3v-1M7 4 4 7l3 3M17 20l3-3-3-3M12 9v6M10.5 10.5 12 9"/>',
-  shuffle: '<path d="M4 7h2c5 0 7 10 12 10h2M17 14l3 3-3 3M4 17h2c2 0 3.5-1.5 4.8-3.4M14 8.4C15.1 7.5 16.3 7 18 7h2M17 4l3 3-3 3"/>',
-  back: '<path d="m14.5 5-7 7 7 7M8 12h9"/>'
+  note: '<path d="M9 17V6.5L19 4v10.5"/><circle cx="6.5" cy="17.5" r="2.5" fill="currentColor" stroke="none"/><circle cx="16.5" cy="15" r="2.5" fill="currentColor" stroke="none"/>',
+  previous: '<rect x="5.5" y="5" width="2.5" height="14" rx="1.25" fill="currentColor" stroke="none"/><path d="M18.25 5.75a1 1 0 0 1 1.6.8v10.9a1 1 0 0 1-1.6.8l-7.15-5.45a1 1 0 0 1 0-1.6l7.15-5.45Z" fill="currentColor" stroke="none"/>',
+  next: '<rect x="16" y="5" width="2.5" height="14" rx="1.25" fill="currentColor" stroke="none"/><path d="M5.75 5.75a1 1 0 0 0-1.6.8v10.9a1 1 0 0 0 1.6.8l7.15-5.45a1 1 0 0 0 0-1.6L5.75 5.75Z" fill="currentColor" stroke="none"/>',
+  play: '<path d="M8.5 5.65a1.15 1.15 0 0 1 1.76-.97l10 6.35a1.15 1.15 0 0 1 0 1.94l-10 6.35a1.15 1.15 0 0 1-1.76-.97V5.65Z" fill="currentColor" stroke="none"/>',
+  pause: '<rect x="6.75" y="5" width="4" height="14" rx="1.35" fill="currentColor" stroke="none"/><rect x="13.25" y="5" width="4" height="14" rx="1.35" fill="currentColor" stroke="none"/>',
+  order: '<path d="M4.5 6.5h14M4.5 11.5h14M4.5 16.5h9.5M17 14l3 3-3 3"/>',
+  repeatOne: '<path d="m17 4 3 3-3 3M20 7H8a4 4 0 0 0-4 4v1M7 20l-3-3 3-3M4 17h12a4 4 0 0 0 4-4v-1M10.75 11l1.75-1.25V15"/>',
+  shuffle: '<path d="M3.5 7h2.25c4.75 0 7 10 12 10h2.75M17.5 14l3 3-3 3M3.5 17h2.25c1.8 0 3.15-1.35 4.35-3.1M13.9 9.8C15 8.2 16.3 7 18.25 7h2.25M17.5 4l3 3-3 3"/>',
+  back: '<path d="m13.5 5-7 7 7 7M7 12h11"/>'
 });
 
 export function icon(name, label = "") {
-  return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="${label ? "false" : "true"}">${paths[name] || paths.note}</svg>`;
+  return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="${label ? "false" : "true"}">${paths[name] || paths.note}</svg>`;
 }
