@@ -36,6 +36,11 @@
         <button id="toggle-button" data-control="toggle" aria-label="播放"></button>
         <button data-control="next" aria-label="下一首"></button>
       </div>
+      <div class="progress-row">
+        <span id="player-current-time">0:00</span>
+        <input id="progress-slider" type="range" min="0" max="0" value="0" step="1" aria-label="播放进度" disabled>
+        <span id="player-duration">0:00</span>
+      </div>
     </footer>
     <script type="module" src="popup.js"></script>
   </body>

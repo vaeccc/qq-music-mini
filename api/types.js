@@ -2,6 +2,7 @@ export const MessageType = Object.freeze({
   PLAY_SONG: "PLAY_SONG",
   PLAY: "PLAY",
   PAUSE: "PAUSE",
+  SEEK: "SEEK",
   PREVIOUS: "PREVIOUS",
   NEXT: "NEXT",
   GET_PLAYER_STATE: "GET_PLAYER_STATE",
@@ -23,6 +24,7 @@ export const PlayerEvent = Object.freeze({
   READY: "READY",
   PLAYING: "PLAYING",
   PAUSED: "PAUSED",
+  PROGRESS: "PROGRESS",
   ENDED: "ENDED",
   ERROR: "ERROR"
 });
@@ -36,5 +38,5 @@ export const ErrorCode = Object.freeze({
 });
 
 export function emptyPlayerState() {
-  return { queue: [], currentIndex: -1, currentSong: null, playing: false };
+  return { queue: [], currentIndex: -1, currentSong: null, playing: false, currentTime: 0, duration: 0 };
 }

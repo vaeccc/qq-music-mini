@@ -70,7 +70,7 @@ async function playQueueSong(queue, index) {
   if (!Array.isArray(queue) || index < 0 || index >= queue.length) return { ok: false, error: "INVALID_QUEUE" };
   const requestId = ++playRequestId;
   const song = queue[index];
-  playerState = { queue, currentIndex: index, currentSong: song, playing: false, errorMessage: "" };
+  playerState = { queue, currentIndex: index, currentSong: song, playing: false, currentTime: 0, duration: 0, errorMessage: "" };
   await publishState();
   let playUrl;
   try {
@@ -142,6 +142,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: true, discarded: true });
         return;
       }
+      if (message.event === PlayerEvent.PROGRESS) {
+        playerState.currentTime = Number(message.currentTime) || 0;
+        playerState.duration = Number(message.duration) || 0;
+        chrome.runtime.sendMessage({ type: MessageType.PLAYER_STATE_CHANGED, state: playerState }).catch(() => undefined);
+        sendResponse({ ok: true });
+        return;
+      }
       if (message.event === PlayerEvent.PLAYING) playerState.playing = true;
       if (message.event === PlayerEvent.PAUSED || message.event === PlayerEvent.ERROR || message.event === PlayerEvent.ENDED) playerState.playing = false;
       if (message.event === PlayerEvent.ERROR) playerState.errorMessage = "当前歌曲暂不可播放";
@@ -159,6 +166,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return;
     }
     if (message.type === MessageType.GET_PLAYER_STATE) {
+      if (playerState.currentSong) {
+        try {
+          const playback = await sendToPlayer({ type: MessageType.GET_PLAYBACK_STATUS });
+          if (playback?.ok) {
+            playerState.playing = Boolean(playback.playing);
+            playerState.currentTime = Number(playback.currentTime) || 0;
+            playerState.duration = Number(playback.duration) || 0;
+          }
+        } catch (error) { console.warn("Playback position restore failed", error); }
+      }
       sendResponse({ ok: true, state: playerState });
       return;
     }
@@ -221,6 +238,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
     if (message.type === MessageType.PAUSE) {
       sendResponse(await sendToPlayer({ type: MessageType.PAUSE }));
+      return;
+    }
+    if (message.type === MessageType.SEEK) {
+      const result = await sendToPlayer({ type: MessageType.SEEK, position: message.position });
+      if (result?.ok) {
+        playerState.currentTime = Number(result.currentTime) || 0;
+        playerState.duration = Number(result.duration) || 0;
+        chrome.runtime.sendMessage({ type: MessageType.PLAYER_STATE_CHANGED, state: playerState }).catch(() => undefined);
+      }
+      sendResponse(result);
       return;
     }
     if (message.type === MessageType.PREVIOUS) {

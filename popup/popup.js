@@ -1,9 +1,9 @@
 import { MessageType } from "../api/types.js";
 import { icon } from "./icons.js";
 
-const state = { tab: "liked", library: null, searchKeyword: "", searchResults: [], singerResults: [], searchPaging: null, detail: null, singerDetail: null, player: null, poll: null, viewRequestId: 0 };
+const state = { tab: "liked", library: null, searchKeyword: "", searchResults: [], singerResults: [], searchPaging: null, detail: null, singerDetail: null, player: null, seeking: false, poll: null, viewRequestId: 0 };
 const elements = {
-  notice: document.querySelector("#notice"), login: document.querySelector("#login-view"), music: document.querySelector("#music-view"), qr: document.querySelector("#qr-panel"), qrImage: document.querySelector("#qr-image"), qrStatus: document.querySelector("#qr-status"), content: document.querySelector("#content"), playerTitle: document.querySelector("#player-title"), playerArtist: document.querySelector("#player-artist"), playerCover: document.querySelector("#player-cover"), toggle: document.querySelector("#toggle-button")
+  notice: document.querySelector("#notice"), login: document.querySelector("#login-view"), music: document.querySelector("#music-view"), qr: document.querySelector("#qr-panel"), qrImage: document.querySelector("#qr-image"), qrStatus: document.querySelector("#qr-status"), content: document.querySelector("#content"), playerTitle: document.querySelector("#player-title"), playerArtist: document.querySelector("#player-artist"), playerCover: document.querySelector("#player-cover"), toggle: document.querySelector("#toggle-button"), progress: document.querySelector("#progress-slider"), currentTime: document.querySelector("#player-current-time"), duration: document.querySelector("#player-duration")
 };
 function message(type, payload = {}) { return chrome.runtime.sendMessage({ type, ...payload }); }
 function clear(node) { node.replaceChildren(); }
@@ -11,15 +11,17 @@ function showNotice(text = "", kind = "") { elements.notice.hidden = !text; elem
 function showLoginView() { elements.login.hidden = false; elements.music.hidden = true; }
 function showMusicView() { elements.login.hidden = true; elements.music.hidden = false; }
 function setCover(node, url) { node.style.backgroundImage = url ? `url("${url}")` : ""; node.innerHTML = url ? "" : icon("note"); }
-function renderPlayer(player) { state.player = player; const song = player?.currentSong; elements.playerTitle.textContent = song?.title || "暂无播放歌曲"; elements.playerArtist.textContent = song?.artist || ""; setCover(elements.playerCover, song?.cover); elements.toggle.innerHTML = icon(player?.playing ? "pause" : "play"); elements.toggle.setAttribute("aria-label", player?.playing ? "暂停" : "播放"); if (player?.errorMessage) showNotice(player.errorMessage); }
+function formatTime(seconds) { const value = Math.max(0, Math.floor(Number(seconds) || 0)); return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, "0")}`; }
+function renderPlayer(player) { state.player = player; const song = player?.currentSong; const songKey = String(song?.mid || song?.id || ""); const duration = Math.max(0, Number(player?.duration) || 0); const currentTime = Math.min(Math.max(0, Number(player?.currentTime) || 0), duration || Infinity); if (!state.seeking) { elements.progress.max = String(Math.max(0, Math.floor(duration))); elements.progress.value = String(Math.floor(currentTime)); elements.currentTime.textContent = formatTime(currentTime); } const displayTime = state.seeking ? Number(elements.progress.value) || 0 : currentTime; elements.playerTitle.textContent = song?.title || "暂无播放歌曲"; elements.playerArtist.textContent = song?.artist || ""; setCover(elements.playerCover, song?.cover); elements.toggle.innerHTML = icon(player?.playing ? "pause" : "play"); elements.toggle.setAttribute("aria-label", player?.playing ? "暂停" : "播放"); elements.duration.textContent = formatTime(duration); elements.progress.disabled = !song || duration <= 0; elements.progress.style.setProperty("--progress", duration > 0 ? `${displayTime / duration * 100}%` : "0%"); document.querySelectorAll(".song-row").forEach((row) => { const active = Boolean(songKey && row.dataset.songKey === songKey); row.classList.toggle("active", active); row.setAttribute("aria-current", active ? "true" : "false"); }); if (player?.errorMessage) showNotice(player.errorMessage); }
 
 function makeSongRow(song, queue, index) {
-  const row = document.createElement("button"); row.className = "song-row";
+  const row = document.createElement("button"); row.className = "song-row"; row.dataset.songKey = String(song.mid || song.id || "");
   const cover = document.createElement("span"); cover.className = "cover"; setCover(cover, song.cover);
   const info = document.createElement("span"); info.className = "song-info";
   const title = document.createElement("strong"); title.textContent = song.title;
   const sub = document.createElement("span"); sub.textContent = [song.artist, song.album].filter(Boolean).join(" · ");
   info.append(title, sub); row.append(cover, info);
+  const currentKey = state.player?.currentSong?.mid || state.player?.currentSong?.id; if (currentKey && String(currentKey) === row.dataset.songKey) { row.classList.add("active"); row.setAttribute("aria-current", "true"); }
   row.addEventListener("click", async () => playSong(queue, index));
   return row;
 }
@@ -88,6 +90,8 @@ async function checkLogin() { const result = await message(MessageType.LOGIN_STA
 document.querySelectorAll(".nav-button").forEach((button) => button.addEventListener("click", () => { state.tab = button.dataset.tab; state.detail = null; state.singerDetail = null; renderTab(); }));
 document.querySelector("#login-button").addEventListener("click", startLogin); document.querySelector("#retry-login").addEventListener("click", startLogin);
 document.querySelectorAll("[data-control]").forEach((button) => button.addEventListener("click", async () => { const action = button.dataset.control; const type = action === "previous" ? MessageType.PREVIOUS : action === "next" ? MessageType.NEXT : state.player?.playing ? MessageType.PAUSE : MessageType.PLAY; const result = await message(type); if (!result?.ok) showNotice(result?.message || "播放地址获取失败"); }));
+elements.progress.addEventListener("input", () => { state.seeking = true; const currentTime = Number(elements.progress.value) || 0; elements.currentTime.textContent = formatTime(currentTime); const duration = Number(elements.progress.max) || 0; elements.progress.style.setProperty("--progress", duration > 0 ? `${currentTime / duration * 100}%` : "0%"); });
+elements.progress.addEventListener("change", async () => { const result = await message(MessageType.SEEK, { position: Number(elements.progress.value) || 0 }); state.seeking = false; if (!result?.ok) { showNotice(result?.message || "暂时无法调整播放进度"); renderPlayer(state.player); return; } renderPlayer({ ...state.player, currentTime: result.currentTime, duration: result.duration }); });
 document.querySelector('[data-control="previous"]').innerHTML = icon("previous"); document.querySelector('[data-control="next"]').innerHTML = icon("next");
 chrome.runtime.onMessage.addListener((message) => { if (message.type === MessageType.PLAYER_STATE_CHANGED) renderPlayer(message.state); });
 (async () => { const player = await message(MessageType.GET_PLAYER_STATE); renderPlayer(player.state); const requestId = ++state.viewRequestId; try { await loadLibrary(); if (requestId === state.viewRequestId) showMusicView(); } catch (error) { if (requestId === state.viewRequestId) { showLoginView(); if (error.error !== "LOGIN_EXPIRED") showNotice(error.message || "网络请求失败"); } } })();
