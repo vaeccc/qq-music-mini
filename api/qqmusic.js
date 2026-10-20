@@ -75,15 +75,15 @@ function normalizeSong(raw = {}) {
   const singer = raw.singer || raw.singerlist || [];
   const artists = Array.isArray(singer)
     ? singer.map((item) => item.name || item.title).filter(Boolean).join(" / ")
-    : valueAt(raw, ["singername", "singer"]);
+    : valueAt(raw, ["singername", "singerName", "singer"]);
   return {
-    mid: valueAt(raw, ["mid", "songmid", "songMid"]),
+    mid: valueAt(raw, ["mid", "songmid", "songMid", "song_mid"]),
     mediaMid: valueAt(raw, ["file.media_mid", "file.mediaMid", "strMediaMid", "media_mid"]),
     title: valueAt(raw, ["name", "songname", "title"]),
     artist: artists || "未知歌手",
     album: valueAt(raw, ["album.name", "albumname", "albumName"]),
     albumMid,
-    cover: albumMid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}.jpg` : "",
+    cover: String(valueAt(raw, ["cover", "picurl", "picUrl"], albumMid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}.jpg` : "")).replace(/^http:/, "https:"),
     songType: Number(valueAt(raw, ["type", "songtype"], 0)) || 0
   };
 }
@@ -184,6 +184,80 @@ export async function getPlaylistDetail(playlist, credential) {
   }, credential);
   const data = checkResponse(response.req_0, "playlist-detail");
   return { title: data?.dirinfo?.title || playlist.title, songs: (data?.songlist || []).map(normalizeSong) };
+}
+
+async function getJson(url, context) {
+  let response;
+  try {
+    response = await fetch(url, { credentials: "include" });
+  } catch (error) {
+    console.error("QQ Music request failed", context, error);
+    throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败");
+  }
+  if (!response.ok) throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { context, status: response.status });
+  try {
+    return await response.json();
+  } catch (error) {
+    throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { context, reason: "invalid-json" });
+  }
+}
+
+export async function getToplists() {
+  const url = new URL("https://c.y.qq.com/v8/fcg-bin/fcg_myqq_toplist.fcg");
+  url.searchParams.set("g_tk", "5381");
+  url.searchParams.set("uin", "0");
+  url.searchParams.set("format", "json");
+  url.searchParams.set("inCharset", "utf-8");
+  url.searchParams.set("outCharset", "utf-8");
+  url.searchParams.set("notice", "0");
+  url.searchParams.set("platform", "h5");
+  url.searchParams.set("needNewCode", "1");
+  const response = await getJson(url, "toplists");
+  if (Number(response?.code ?? 0) !== 0) throw new QQMusicError(ErrorCode.NETWORK, "排行榜加载失败", { code: response?.code });
+  const rawLists = response?.data?.topList || response?.topList || response?.data?.toplist || [];
+  return rawLists.map((item) => ({
+    id: Number(item.id || item.topid || item.topId || 0),
+    title: item.topTitle || item.title || item.name || "未命名榜单",
+    cover: String(item.picUrl || item.picurl || item.frontPicUrl || item.front_pic_url || "").replace(/^http:/, "https:"),
+    count: Number(item.totalNum || item.songnum || item.songNum || 0),
+    preview: (item.songList || item.songlist || []).slice(0, 3).map((song) => `${song.singername || song.singer || "未知歌手"} · ${song.songname || song.name || ""}`)
+  })).filter((item) => item.id > 0);
+}
+
+export async function getToplistDetail(toplist, credential, offset = 0) {
+  const request = {
+    comm: common(credential),
+    req_1: {
+      module: "musicToplist.ToplistInfoServer",
+      method: "GetDetail",
+      param: { topid: Number(toplist.id), offset: Number(offset) || 0, num: 100 }
+    }
+  };
+  const url = new URL(MUSICU);
+  url.searchParams.set("data", JSON.stringify(request));
+  const response = await getJson(url, "toplist-detail");
+  const block = response?.req_1 || response?.topList || response?.toplist || response?.req_0;
+  const data = checkResponse(block, "toplist-detail");
+  const detail = data?.data || data;
+  const rawSongs = detail?.songInfoList || detail?.songlist || detail?.songList || detail?.song || [];
+  let songs = rawSongs.map(normalizeSong).filter((song) => song.mid);
+  if (!songs.length && rawSongs.length) {
+    const songIds = rawSongs.map((song) => song.songId || song.songid || song.id).filter(Boolean);
+    if (songIds.length) {
+      const songUrl = new URL("https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg");
+      Object.entries({ songid: songIds.join(","), tpl: "yqq_song_detail", format: "json", loginUin: credential?.musicid || 0, hostUin: 0, outCharset: "utf8", notice: 0, platform: "yqq", needNewCode: 0, g_tk: hash33(credential?.musickey || "") }).forEach(([key, value]) => songUrl.searchParams.set(key, String(value)));
+      const songResponse = await getJson(songUrl, "toplist-songs");
+      songs = (songResponse?.data || []).map(normalizeSong).filter((song) => song.mid);
+    }
+  }
+  return {
+    id: Number(toplist.id),
+    title: detail?.title || toplist.title,
+    period: detail?.updateTime || detail?.period || "",
+    total: Number(detail?.totalNum || detail?.total || toplist.count || 0),
+    cover: String(detail?.frontPicUrl || detail?.front_pic_url || toplist.cover || "").replace(/^http:/, "https:"),
+    songs
+  };
 }
 
 async function searchWithSmartbox(keyword, credential) {
