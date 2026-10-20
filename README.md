@@ -2,6 +2,8 @@
 
 一个面向 Chrome 和 Edge 的轻量 QQ 音乐播放器扩展。扫码登录后，可以查看“我喜欢”和个人歌单，搜索歌曲或歌手，并在浏览器后台持续播放。
 
+[从 Microsoft Edge Add-ons 安装](https://microsoftedge.microsoft.com/addons/detail/qq-music-mini/dpeoaedhplbgjhpafgnppiaclbmoclaf) · [GitHub 源码](https://github.com/vaeccc/qq-music-mini)
+
 > 非腾讯官方项目，仅供个人学习与技术研究使用。
 
 ## 功能
@@ -21,11 +23,19 @@
 - 区分登录失效、网络异常、账号权限、版权限制和音频加载错误
 - 紧凑播放器栏与自定义扩展图标
 
-## 普通用户安装
+## 安装
 
-目前尚未上架浏览器应用商店，需要通过“加载已解压的扩展程序”安装。项目使用 Manifest V3，需要 Chrome / Edge 109 或更高版本。
+项目使用 Manifest V3，需要 Chrome / Edge 109 或更高版本。
 
-### 下载 ZIP 安装
+### Edge 用户（推荐）
+
+直接打开 [QQ Music Mini 的 Edge Add-ons 页面](https://microsoftedge.microsoft.com/addons/detail/qq-music-mini/dpeoaedhplbgjhpafgnppiaclbmoclaf)，点击“获取”并确认添加扩展即可。
+
+### Chrome 用户
+
+目前 Chrome 版本通过“加载已解压的扩展程序”安装：
+
+#### 下载 ZIP 安装
 
 1. 打开本项目的 [GitHub 仓库](https://github.com/vaeccc/qq-music-mini)。
 2. 点击绿色的 **Code** 按钮，再点击 **Download ZIP**。
@@ -37,7 +47,7 @@
 6. 点击“加载已解压的扩展程序”，选择解压后包含 `manifest.json` 的项目文件夹。
 7. 点击浏览器工具栏中的扩展按钮，将 **QQ Music Mini** 固定到工具栏。
 
-### 使用 Git 安装（可选）
+#### 使用 Git 安装（可选）
 
 熟悉 Git 的用户也可以克隆仓库：
 
@@ -79,6 +89,7 @@ cd qq-music-mini
 
 ## 更新扩展
 
+- **Edge 商店安装**：Edge 会自动检查更新，也可以在 `edge://extensions` 页面点击“更新”。
 - **通过 ZIP 安装**：重新下载最新版 ZIP 并解压，然后在扩展管理页找到 QQ Music Mini，点击“重新加载”。如果换了解压目录，也可以先移除旧版本再重新加载新目录。
 - **通过 Git 安装**：在项目目录执行 `git pull`，然后回到扩展管理页点击“重新加载”。
 
@@ -97,6 +108,8 @@ cd qq-music-mini
 - 播放地址不会持久化；每次切歌都会重新请求。
 - 无法取得授权播放地址时，扩展会提示对应原因；不会尝试绕过会员、数字专辑、地区或版权限制。
 
+完整隐私政策请参阅 [PRIVACY.md](https://github.com/vaeccc/qq-music-mini/blob/master/PRIVACY.md)。
+
 ## 开发
 
 项目没有构建步骤，修改源码后在扩展管理页点击“重新加载”即可。
@@ -114,7 +127,7 @@ icons/                 扩展图标资源
 
 - 这是非官方实现，QQ 音乐服务端接口、登录方式或版权策略变化时，部分功能可能失效。
 - 播放能力完全取决于当前 QQ 账号的有效登录态与歌曲授权范围。
-- 本项目尚未作为官方 QQ 音乐客户端或插件发布，也不代表腾讯或 QQ 音乐。
+- 本项目不是官方 QQ 音乐客户端或插件，也不代表腾讯或 QQ 音乐。
 
 ## 参考与致谢
 
