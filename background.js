@@ -12,6 +12,7 @@ let offscreenReady = false;
 let playRequestId = 0;
 // Indices of the tracks played so far in shuffle mode, used by "previous".
 const shuffleHistory = [];
+let shuffleQueueKey = "";
 const skippablePlaybackErrors = new Set([ErrorCode.NO_PERMISSION, ErrorCode.NO_COPYRIGHT, ErrorCode.PLAY_URL, ErrorCode.PLAYBACK_FAILED]);
 
 function describePlaybackError(error, song, skipped = false) {
@@ -53,9 +54,11 @@ async function ensureOffscreenDocument() {
   if (offscreenCreating) return offscreenCreating;
   offscreenCreating = (async () => {
     if (await hasOffscreenDocument()) {
-      offscreenReady = true;
+      if (offscreenReady) return;
+      await waitForOffscreenReady();
       return;
     }
+    offscreenReady = false;
     const offscreenUrl = chrome.runtime.getURL("offscreen/offscreen.html");
     await chrome.offscreen.createDocument({
       url: "offscreen/offscreen.html",
@@ -75,7 +78,6 @@ async function ensureOffscreenDocument() {
  * `undefined`, which the caller cannot distinguish from a failed playback.
  */
 async function waitForOffscreenReady(timeoutMs = 3000) {
-  if (offscreenReady) return true;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -184,6 +186,10 @@ function rememberShuffleIndex(index) {
   if (shuffleHistory.length > 200) shuffleHistory.shift();
 }
 
+function queueKey(queue) {
+  return (queue || []).map((song) => String(song?.mid || song?.id || "")).join("|");
+}
+
 /**
  * Plays a track from the queue, skipping over tracks that cannot be played.
  *
@@ -195,6 +201,11 @@ function rememberShuffleIndex(index) {
 async function playQueueSong(queue, index, excluded = new Set()) {
   await initialize();
   if (!Array.isArray(queue) || index < 0 || index >= queue.length) return { ok: false, error: "INVALID_QUEUE" };
+  const nextQueueKey = queueKey(queue);
+  if (nextQueueKey !== shuffleQueueKey) {
+    shuffleHistory.length = 0;
+    shuffleQueueKey = nextQueueKey;
+  }
   let cursor = index;
   const skipped = new Set(excluded);
   let lastDiagnostic = null;
@@ -390,6 +401,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       await clearCredential();
       const playMode = playerState.playMode || PlaybackMode.ORDER;
       const stopRequestId = ++playRequestId;
+      shuffleHistory.length = 0;
+      shuffleQueueKey = "";
       playerState = { ...emptyPlayerState(), playMode };
       await publishState();
       try {
@@ -466,6 +479,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: false, error: "INVALID_PLAY_MODE", message: "不支持的播放模式" });
         return;
       }
+      if (playerState.playMode !== message.mode) shuffleHistory.length = 0;
       playerState.playMode = message.mode;
       await publishState();
       sendResponse({ ok: true, state: playerState });
