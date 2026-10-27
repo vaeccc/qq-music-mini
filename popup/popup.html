@@ -21,7 +21,7 @@
           </div>
         </div>
       </header>
-      <p id="notice" class="notice" role="status" hidden></p>
+      <div id="notice" class="notice" role="status" hidden><span id="notice-text"></span><button id="diagnostic-button" class="diagnostic-button" type="button" hidden>诊断</button></div>
       <section id="login-view" class="login-view" hidden>
         <p>登录后查看你的音乐和歌单。</p>
         <button id="login-button" class="primary">登录 QQ 音乐</button>
@@ -46,9 +46,9 @@
       <div class="now-playing"><strong id="player-title">暂无播放歌曲</strong><span id="player-artist"></span></div>
       <div class="player-controls" aria-label="播放器控制">
         <button id="mode-button" aria-label="播放模式：顺序播放" title="顺序播放"></button>
-        <button data-control="previous" aria-label="上一首"></button>
-        <button id="toggle-button" data-control="toggle" aria-label="播放"></button>
-        <button data-control="next" aria-label="下一首"></button>
+        <button data-control="previous" aria-label="上一首" title="上一首"></button>
+        <button id="toggle-button" data-control="toggle" aria-label="播放" title="播放"></button>
+        <button data-control="next" aria-label="下一首" title="下一首"></button>
       </div>
       <div class="progress-row">
         <span id="player-current-time">0:00</span>
