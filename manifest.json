@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "QQ Music Mini",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "极简 QQ 音乐浏览器播放器。",
   "permissions": ["storage", "offscreen", "cookies"],
   "host_permissions": [
