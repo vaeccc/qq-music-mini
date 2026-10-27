@@ -3,6 +3,13 @@ import { ErrorCode } from "./types.js";
 const MUSICU = "https://u.y.qq.com/cgi-bin/musicu.fcg";
 const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const PRIMARY_SEARCH_TIMEOUT_MS = 2200;
+// fcg_play_single_song.fcg silently truncates a request to 50 song ids, so the
+// toplist fallback has to be requested in chunks to keep every track.
+const SONG_DETAIL_CHUNK_SIZE = 50;
+// How many per-song detail lookups may be in flight at once.
+const DETAIL_LOOKUP_BATCH_SIZE = 4;
+// Codes that mean "the credential itself is rejected" rather than "the request failed".
+const LOGIN_REJECTED_CODES = new Set([1000, 10004, 104400, 104401]);
 
 export class QQMusicError extends Error {
   constructor(code, message, detail = {}) {
@@ -97,24 +104,42 @@ function normalizeSinger(raw = {}) {
   };
 }
 
-function checkResponse(response, context) {
+function checkResponse(response, context, extraLoginCodes = []) {
   const code = Number(response?.code ?? 0);
   if (code === 0) return response?.data ?? response;
-  if ([1000, 104400, 104401].includes(code)) throw new QQMusicError(ErrorCode.LOGIN_EXPIRED, "QQ 音乐登录已失效，请重新登录", { context, code });
+  if (LOGIN_REJECTED_CODES.has(code) || extraLoginCodes.includes(code)) {
+    throw new QQMusicError(ErrorCode.LOGIN_EXPIRED, "QQ 音乐登录已失效，请重新登录", { context, code });
+  }
   throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { context, code });
 }
 
+/**
+ * Validates a stored credential.
+ *
+ * The result is intentionally tri-state: a network hiccup must not be
+ * mistaken for "the credential is dead", otherwise a single dropped request
+ * would wipe the local login and force the user to re-scan the QR code.
+ *
+ * @returns {Promise<boolean|"unknown">} true = valid, false = rejected, "unknown" = could not tell.
+ */
 export async function validateCredential(credential) {
   if (!credential?.musicid || !credential?.musickey) return false;
+  let response;
   try {
-    const response = await musicu({
+    response = await musicu({
       req_0: { module: "music.UserInfo.userInfoServer", method: "GetLoginUserInfo", param: {} }
     }, credential);
-    return Number(response.req_0?.code) === 0;
   } catch (error) {
     console.error("Credential validation failed", error);
-    return false;
+    return "unknown";
   }
+  const code = Number(response?.req_0?.code);
+  if (code === 0) return true;
+  if (LOGIN_REJECTED_CODES.has(code)) return false;
+  // Any other code means the request reached QQ Music but did not confirm the
+  // session. Treat it as inconclusive rather than as a rejected login.
+  console.warn("Credential validation returned an inconclusive code", code);
+  return "unknown";
 }
 
 export async function refreshCredential(credential) {
@@ -159,11 +184,14 @@ export async function getUserLibrary(credential) {
     }
   }, credential);
   const playlistData = checkResponse(response.req_0, "playlists");
-  const likedData = checkResponse(response.req_1, "liked");
+  // 10004 means the personal "liked" list was rejected, which for dirid=201
+  // only happens when the session is not actually authenticated.
+  const likedData = checkResponse(response.req_1, "liked", [10004]);
   const rawPlaylists = playlistData?.v_playlist || playlistData?.playlist || playlistData?.list || [];
   return {
     user: { musicid, encryptUin, nickname, avatar },
     liked: (likedData?.songlist || []).map(normalizeSong),
+    likedTotal: Number(likedData?.songlist_size || likedData?.total_song_num || 0),
     playlists: rawPlaylists.map((item) => ({
       id: String(item.tid || item.id || item.dissid || item.dirid || item.dirId),
       dirid: Number(item.dirid || item.dirId || 0),
@@ -174,22 +202,57 @@ export async function getUserLibrary(credential) {
   };
 }
 
-export async function getPlaylistDetail(playlist, credential) {
+/**
+ * Loads one page of the personal "liked" list. The list is served by the same
+ * CgiGetDiss endpoint as regular playlists, so `song_begin` pages it.
+ */
+export async function getLikedSongs(credential, begin = 0) {
   const response = await musicu({
     req_0: {
       module: "music.srfDissInfo.DissInfo",
       method: "CgiGetDiss",
-      param: { disstid: Number(playlist.id), dirid: playlist.dirid || 0, tag: true, song_begin: 0, song_num: 300, userinfo: true, orderlist: true }
+      param: { disstid: 0, dirid: 201, tag: true, song_begin: Math.max(0, Number(begin) || 0), song_num: 100, userinfo: true, orderlist: true }
+    }
+  }, credential);
+  const data = checkResponse(response.req_0, "liked", [10004]);
+  return {
+    songs: (data?.songlist || []).map(normalizeSong),
+    total: Number(data?.songlist_size || data?.total_song_num || 0)
+  };
+}
+
+export async function getPlaylistDetail(playlist, credential, begin = 0) {
+  const response = await musicu({
+    req_0: {
+      module: "music.srfDissInfo.DissInfo",
+      method: "CgiGetDiss",
+      param: {
+        disstid: Number(playlist.id),
+        dirid: playlist.dirid || 0,
+        tag: true,
+        song_begin: Math.max(0, Number(begin) || 0),
+        song_num: 100,
+        userinfo: true,
+        orderlist: true
+      }
     }
   }, credential);
   const data = checkResponse(response.req_0, "playlist-detail");
-  return { title: data?.dirinfo?.title || playlist.title, songs: (data?.songlist || []).map(normalizeSong) };
+  return {
+    id: Number(playlist.id),
+    dirid: Number(playlist.dirid || 0),
+    title: data?.dirinfo?.title || playlist.title,
+    songs: (data?.songlist || []).map(normalizeSong),
+    total: Number(data?.dirinfo?.songnum || data?.songlist_size || data?.total_song_num || 0)
+  };
 }
 
 async function getJson(url, context) {
   let response;
   try {
-    response = await fetch(url, { credentials: "include" });
+    // The same endpoints answer differently depending on the UA, so every
+    // request identifies itself the same way.
+    response = await fetch(url, { credentials: "include", headers: { "user-agent": WEB_UA } });
   } catch (error) {
     console.error("QQ Music request failed", context, error);
     throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败");
@@ -219,18 +282,31 @@ export async function getToplists() {
     id: Number(item.id || item.topid || item.topId || 0),
     title: item.topTitle || item.title || item.name || "未命名榜单",
     cover: String(item.picUrl || item.picurl || item.frontPicUrl || item.front_pic_url || "").replace(/^http:/, "https:"),
-    count: Number(item.totalNum || item.songnum || item.songNum || 0),
+    // This endpoint exposes no track count at all — only `listenCount` (plays).
+    // Reporting 0 lets the UI show "查看榜单歌曲" instead of a wrong "0 首歌曲".
+    count: 0,
     preview: (item.songList || item.songlist || []).slice(0, 3).map((song) => `${song.singername || song.singer || "未知歌手"} · ${song.songname || song.name || ""}`)
   })).filter((item) => item.id > 0);
 }
 
+/**
+ * Resolves a toplist into playable songs.
+ *
+ * `GetDetail` answers with two parallel arrays:
+ *   - `data.songInfoList` — complete song objects (mid, file.media_mid, album, singer)
+ *   - `data.data.song`   — rank rows that only carry a numeric `songId`
+ * Only the former can be turned into playable tracks, so it is preferred. The
+ * rank rows remain as a fallback and are resolved through the song-detail
+ * endpoint, which silently caps a single request at 50 ids and therefore has
+ * to be paged.
+ */
 export async function getToplistDetail(toplist, credential, offset = 0) {
   const request = {
     comm: common(credential),
     req_1: {
       module: "musicToplist.ToplistInfoServer",
       method: "GetDetail",
-      param: { topid: Number(toplist.id), offset: Number(offset) || 0, num: 100 }
+      param: { topid: Number(toplist.id), offset: Math.max(0, Number(offset) || 0), num: 100 }
     }
   };
   const url = new URL(MUSICU);
@@ -239,16 +315,10 @@ export async function getToplistDetail(toplist, credential, offset = 0) {
   const block = response?.req_1 || response?.topList || response?.toplist || response?.req_0;
   const data = checkResponse(block, "toplist-detail");
   const detail = data?.data || data;
-  const rawSongs = detail?.songInfoList || detail?.songlist || detail?.songList || detail?.song || [];
+  const rawSongs = data?.songInfoList || detail?.songInfoList || detail?.songlist || detail?.songList || detail?.song || [];
   let songs = rawSongs.map(normalizeSong).filter((song) => song.mid);
   if (!songs.length && rawSongs.length) {
-    const songIds = rawSongs.map((song) => song.songId || song.songid || song.id).filter(Boolean);
-    if (songIds.length) {
-      const songUrl = new URL("https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg");
-      Object.entries({ songid: songIds.join(","), tpl: "yqq_song_detail", format: "json", loginUin: credential?.musicid || 0, hostUin: 0, outCharset: "utf8", notice: 0, platform: "yqq", needNewCode: 0, g_tk: hash33(credential?.musickey || "") }).forEach(([key, value]) => songUrl.searchParams.set(key, String(value)));
-      const songResponse = await getJson(songUrl, "toplist-songs");
-      songs = (songResponse?.data || []).map(normalizeSong).filter((song) => song.mid);
-    }
+    songs = await resolveSongsById(rawSongs, credential);
   }
   return {
     id: Number(toplist.id),
@@ -258,6 +328,36 @@ export async function getToplistDetail(toplist, credential, offset = 0) {
     cover: String(detail?.frontPicUrl || detail?.front_pic_url || toplist.cover || "").replace(/^http:/, "https:"),
     songs
   };
+}
+
+/**
+ * Resolves rank rows that only expose numeric song ids into full song objects.
+ * The endpoint truncates at 50 ids per request, so ids are requested in chunks
+ * and concatenated in the original order.
+ */
+async function resolveSongsById(rawSongs, credential) {
+  const songIds = rawSongs.map((song) => song.songId || song.songid || song.id).filter(Boolean);
+  if (!songIds.length) return [];
+  const collected = [];
+  for (let start = 0; start < songIds.length; start += SONG_DETAIL_CHUNK_SIZE) {
+    const chunk = songIds.slice(start, start + SONG_DETAIL_CHUNK_SIZE);
+    const songUrl = new URL("https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg");
+    Object.entries({
+      songid: chunk.join(","),
+      tpl: "yqq_song_detail",
+      format: "json",
+      loginUin: credential?.musicid || 0,
+      hostUin: 0,
+      outCharset: "utf8",
+      notice: 0,
+      platform: "yqq",
+      needNewCode: 0,
+      g_tk: hash33(credential?.musickey || "")
+    }).forEach(([key, value]) => songUrl.searchParams.set(key, String(value)));
+    const songResponse = await getJson(songUrl, "toplist-songs");
+    collected.push(...(songResponse?.data || []));
+  }
+  return collected.map(normalizeSong).filter((song) => song.mid);
 }
 
 async function searchWithSmartbox(keyword, credential) {
@@ -286,22 +386,29 @@ async function searchWithSmartbox(keyword, credential) {
       console.warn("QQ Music exact singer search failed", exactSinger.mid, error);
     }
   }
-  const songs = await Promise.all(briefSongs.map(async (song) => {
-    try {
-      const detailResponse = await musicu({
-        req_0: {
-          module: "music.pf_song_detail_svr",
-          method: "get_song_detail_yqq",
-          param: { song_mid: song.mid }
-        }
-      }, credential);
-      const detail = checkResponse(detailResponse.req_0, "song-detail");
-      return normalizeSong(detail?.track_info || song);
-    } catch (error) {
-      console.warn("QQ Music song detail lookup failed", song.mid, error);
-      return song;
-    }
-  }));
+  // smartbox only returns `mid`; the full record (and with it media_mid) has to
+  // be fetched per song. Requests are issued in small waves to stay polite.
+  const songs = [];
+  for (let start = 0; start < briefSongs.length; start += DETAIL_LOOKUP_BATCH_SIZE) {
+    const batch = briefSongs.slice(start, start + DETAIL_LOOKUP_BATCH_SIZE);
+    const detailed = await Promise.all(batch.map(async (song) => {
+      try {
+        const detailResponse = await musicu({
+          req_0: {
+            module: "music.pf_song_detail_svr",
+            method: "get_song_detail_yqq",
+            param: { song_mid: song.mid }
+          }
+        }, credential);
+        const detail = checkResponse(detailResponse.req_0, "song-detail");
+        return normalizeSong(detail?.track_info || song);
+      } catch (error) {
+        console.warn("QQ Music song detail lookup failed", song.mid, error);
+        return song;
+      }
+    }));
+    songs.push(...detailed);
+  }
   return { songs, singers };
 }
 
@@ -362,9 +469,40 @@ export async function getSingerSongs(singer, credential, begin = 0) {
   };
 }
 
+/**
+ * Resolves the `media_mid` of a song, which is the id QQ Music expects in vkey
+ * filenames. It is a different identifier from `song.mid` (verified: the same
+ * track reports songmid=0039MnYb0qxYhV but media_mid=003Qui1q2u1Zho), so
+ * falling back to `song.mid` produces an empty vkey and a false "no copyright"
+ * verdict.
+ */
+async function resolveMediaMid(song, credential) {
+  if (song?.mediaMid) return song.mediaMid;
+  if (!song?.mid) return "";
+  try {
+    const response = await musicu({
+      req_0: {
+        module: "music.pf_song_detail_svr",
+        method: "get_song_detail_yqq",
+        param: { song_mid: song.mid }
+      }
+    }, credential);
+    const detail = checkResponse(response.req_0, "song-detail");
+    return valueAt(detail?.track_info || {}, ["file.media_mid", "media_mid", "strMediaMid"]);
+  } catch (error) {
+    console.warn("QQ Music media mid lookup failed", song.mid, error);
+    return "";
+  }
+}
+
 export async function getPlayUrl(song, credential) {
   if (!song?.mid) throw new QQMusicError(ErrorCode.PLAY_URL, "播放地址获取失败");
-  const mediaMid = song.mediaMid || song.mid;
+  const mediaMid = await resolveMediaMid(song, credential);
+  if (!mediaMid) {
+    // Without a media_mid the vkey request would ask for a file that does not
+    // exist, so report it as a URL problem instead of a copyright problem.
+    throw new QQMusicError(ErrorCode.PLAY_URL, "播放地址获取失败：缺少歌曲媒体标识", { songMid: song.mid });
+  }
   const filename = `M500${mediaMid}.mp3`;
   const response = await musicu({
     req_0: {

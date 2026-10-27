@@ -2,13 +2,16 @@ import { ErrorCode, MessageType, PlaybackMode, PlayerEvent, emptyPlayerState } f
 import { applyBrandIcon } from "./api/brand-icon.js";
 import { clearCredential, getCredential, getPlayerState, setCredential, setPlayerState } from "./storage/store.js";
 import { createQrLogin, pollQrLogin } from "./api/auth.js";
-import { getPlayUrl, getPlaylistDetail, getSingerSongs, getToplistDetail, getToplists, getUserLibrary, QQMusicError, refreshCredential, searchSongs, validateCredential } from "./api/qqmusic.js";
+import { getPlayUrl, getLikedSongs, getPlaylistDetail, getSingerSongs, getToplistDetail, getToplists, getUserLibrary, QQMusicError, refreshCredential, searchSongs, validateCredential } from "./api/qqmusic.js";
 
 let playerState = emptyPlayerState();
 let initialized = false;
 let loginAttempt = null;
 let offscreenCreating = null;
+let offscreenReady = false;
 let playRequestId = 0;
+// Indices of the tracks played so far in shuffle mode, used by "previous".
+const shuffleHistory = [];
 const skippablePlaybackErrors = new Set([ErrorCode.NO_PERMISSION, ErrorCode.NO_COPYRIGHT, ErrorCode.PLAY_URL, ErrorCode.PLAYBACK_FAILED]);
 
 function describePlaybackError(error, song, skipped = false) {
@@ -25,20 +28,68 @@ function describePlaybackError(error, song, skipped = false) {
   return { code, message: `${messages[code] || error?.message || "播放失败"}${skipped ? "，已自动跳过" : ""}` };
 }
 
+/**
+ * Checks whether the offscreen document already exists.
+ *
+ * `chrome.runtime.getContexts` only exists from Chrome 116 onwards, while the
+ * extension supports Chrome 109. On older browsers the document is probed by
+ * asking the player itself, which answers only when it is alive.
+ */
+async function hasOffscreenDocument() {
+  const offscreenUrl = chrome.runtime.getURL("offscreen/offscreen.html");
+  if (typeof chrome.runtime.getContexts === "function") {
+    const contexts = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [offscreenUrl] });
+    return contexts.length > 0;
+  }
+  try {
+    const pong = await chrome.runtime.sendMessage({ type: MessageType.PING, target: "offscreen" });
+    return Boolean(pong?.ok);
+  } catch (error) {
+    return false;
+  }
+}
+
 async function ensureOffscreenDocument() {
   if (offscreenCreating) return offscreenCreating;
   offscreenCreating = (async () => {
-    const offscreenUrl = chrome.runtime.getURL("offscreen/offscreen.html");
-    const contexts = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [offscreenUrl] });
-    if (!contexts.length) {
-      await chrome.offscreen.createDocument({
-        url: "offscreen/offscreen.html",
-        reasons: ["AUDIO_PLAYBACK"],
-        justification: "在关闭扩展弹窗后继续播放用户有权播放的音乐。"
-      });
+    if (await hasOffscreenDocument()) {
+      offscreenReady = true;
+      return;
     }
+    const offscreenUrl = chrome.runtime.getURL("offscreen/offscreen.html");
+    await chrome.offscreen.createDocument({
+      url: "offscreen/offscreen.html",
+      reasons: ["AUDIO_PLAYBACK"],
+      justification: "在关闭扩展弹窗后继续播放用户有权播放的音乐。"
+    });
+    await waitForOffscreenReady();
   })();
   try { await offscreenCreating; } finally { offscreenCreating = null; }
+}
+
+/**
+ * Waits until the offscreen document has registered its message listener.
+ *
+ * `createDocument` resolves as soon as the document exists, but its module
+ * script may not have run yet. Sending a message in that window yields
+ * `undefined`, which the caller cannot distinguish from a failed playback.
+ */
+async function waitForOffscreenReady(timeoutMs = 3000) {
+  if (offscreenReady) return true;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const pong = await chrome.runtime.sendMessage({ type: MessageType.PING, target: "offscreen" });
+      if (pong?.ok) {
+        offscreenReady = true;
+        return true;
+      }
+    } catch (error) {
+      // The document is not listening yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
 }
 
 async function initialize() {
@@ -47,24 +98,34 @@ async function initialize() {
   if (!Object.values(PlaybackMode).includes(playerState.playMode)) playerState.playMode = PlaybackMode.ORDER;
   // Audio URLs are intentionally never persisted, so a browser restart restores the queue as paused.
   playerState.playing = false;
+  // A restored error message describes a failure from a previous session; keeping
+  // it would make the first "play" press skip a track for no visible reason.
+  playerState.errorCode = "";
+  playerState.errorMessage = "";
   initialized = true;
 }
 
 async function requireCredential() {
   const credential = await getCredential();
   if (!credential) throw new QQMusicError("LOGIN_EXPIRED", "QQ 音乐登录已失效，请重新登录");
-  if (await validateCredential(credential)) return credential;
-  try {
-    const refreshed = await refreshCredential(credential);
-    if (await validateCredential(refreshed)) {
-      await setCredential(refreshed);
-      return refreshed;
+  const validity = await validateCredential(credential);
+  if (validity === true) return credential;
+  if (validity === false) {
+    try {
+      const refreshed = await refreshCredential(credential);
+      if (await validateCredential(refreshed) === true) {
+        await setCredential(refreshed);
+        return refreshed;
+      }
+    } catch (error) {
+      console.error("Credential refresh failed", error);
     }
-  } catch (error) {
-    console.error("Credential refresh failed", error);
+    await clearCredential();
+    throw new QQMusicError("LOGIN_EXPIRED", "QQ 音乐登录已失效，请重新登录");
   }
-  await clearCredential();
-  throw new QQMusicError("LOGIN_EXPIRED", "QQ 音乐登录已失效，请重新登录");
+  // The check could not reach QQ Music. Keep the stored credential so a flaky
+  // network does not log the user out, and report the network problem instead.
+  throw new QQMusicError(ErrorCode.NETWORK, "网络连接失败，请检查网络后重试");
 }
 
 async function publishState() {
@@ -81,10 +142,30 @@ async function sendToPlayer(message) {
   return chrome.runtime.sendMessage({ ...message, target: "offscreen" });
 }
 
+/**
+ * Chooses the next track to play.
+ *
+ * In shuffle mode a history stack is kept so that "previous" returns to the
+ * track that was playing before, instead of picking another random one.
+ */
 function getNextQueueIndex(queue, currentIndex, offset, { automatic = false, failed = false, excluded = new Set() } = {}) {
   if (!queue.length) return -1;
   if (playerState.playMode === PlaybackMode.REPEAT_ONE && automatic && !failed && !excluded.has(currentIndex)) return currentIndex;
   if (playerState.playMode === PlaybackMode.SHUFFLE) {
+    if (offset < 0) {
+      // Walk back through the shuffle history. The current track is located in
+      // the history and the entry before it becomes the previous track; the
+      // forward part of the history is dropped so that "next" stays random.
+      let position = -1;
+      for (let index = shuffleHistory.length - 1; index >= 0; index--) {
+        if (shuffleHistory[index] === currentIndex) { position = index; break; }
+      }
+      if (position <= 0) return -1;
+      const candidate = shuffleHistory[position - 1];
+      if (excluded.has(candidate)) return -1;
+      shuffleHistory.length = position;
+      return candidate;
+    }
     const candidates = queue.map((_, index) => index).filter((index) => index !== currentIndex && !excluded.has(index));
     if (candidates.length) return candidates[Math.floor(Math.random() * candidates.length)];
     return automatic && !failed && !excluded.has(currentIndex) ? currentIndex : -1;
@@ -96,49 +177,83 @@ function getNextQueueIndex(queue, currentIndex, offset, { automatic = false, fai
   return -1;
 }
 
+function rememberShuffleIndex(index) {
+  if (playerState.playMode !== PlaybackMode.SHUFFLE) return;
+  if (shuffleHistory[shuffleHistory.length - 1] === index) return;
+  shuffleHistory.push(index);
+  if (shuffleHistory.length > 200) shuffleHistory.shift();
+}
+
+/**
+ * Plays a track from the queue, skipping over tracks that cannot be played.
+ *
+ * The skip loop is iterative on purpose: a recursive implementation would
+ * build one stack frame per skipped track, and a chart where every track is
+ * unavailable would recurse hundreds of times while writing the whole queue
+ * to storage on every step.
+ */
 async function playQueueSong(queue, index, excluded = new Set()) {
   await initialize();
   if (!Array.isArray(queue) || index < 0 || index >= queue.length) return { ok: false, error: "INVALID_QUEUE" };
-  const requestId = ++playRequestId;
-  const song = queue[index];
-  playerState = { queue, currentIndex: index, currentSong: song, playing: false, currentTime: 0, duration: 0, playMode: playerState.playMode || PlaybackMode.ORDER, errorCode: "", errorMessage: "" };
-  await publishState();
-  let playUrl;
-  try {
-    const credential = await requireCredential();
-    playUrl = song.playUrl || await getPlayUrl(song, credential);
-  } catch (error) {
-    if (requestId === playRequestId) {
+  let cursor = index;
+  const skipped = new Set(excluded);
+  let lastDiagnostic = null;
+
+  while (cursor >= 0 && cursor < queue.length) {
+    const requestId = ++playRequestId;
+    const song = queue[cursor];
+    playerState = { queue, currentIndex: cursor, currentSong: song, playing: false, currentTime: 0, duration: 0, playMode: playerState.playMode || PlaybackMode.ORDER, errorCode: "", errorMessage: "" };
+    await publishState();
+    let playUrl;
+    try {
+      const credential = await requireCredential();
+      playUrl = song.playUrl || await getPlayUrl(song, credential);
+    } catch (error) {
+      if (requestId !== playRequestId) return { ok: true, discarded: true };
       const skippable = error instanceof QQMusicError && skippablePlaybackErrors.has(error.code);
       let nextIndex = -1;
       if (skippable) {
-        excluded.add(index);
-        nextIndex = getNextQueueIndex(queue, index, 1, { failed: true, excluded });
+        skipped.add(cursor);
+        nextIndex = getNextQueueIndex(queue, cursor, 1, { failed: true, excluded: skipped });
       }
       const diagnostic = describePlaybackError(error, song, nextIndex >= 0);
+      lastDiagnostic = diagnostic;
       playerState.playing = false;
       playerState.errorCode = diagnostic.code;
       playerState.errorMessage = diagnostic.message;
       await publishState();
-      if (nextIndex >= 0) return playQueueSong(queue, nextIndex, excluded);
+      if (nextIndex >= 0) {
+        cursor = nextIndex;
+        continue;
+      }
       throw new QQMusicError(diagnostic.code, diagnostic.message, error?.detail);
     }
-    throw error;
+    // The user may have picked another track while the URL was being fetched.
+    if (requestId !== playRequestId) return { ok: true, discarded: true };
+    const result = await sendToPlayer({ type: MessageType.PLAY_SONG, url: playUrl, playbackId: requestId });
+    // Re-check after awaiting the player: a newer request supersedes this one,
+    // and a rejection caused by that newer request must not be read as a
+    // failure of the current track.
+    if (requestId !== playRequestId) return { ok: true, discarded: true };
+    if (!result?.ok) {
+      skipped.add(cursor);
+      const nextIndex = getNextQueueIndex(queue, cursor, 1, { failed: true, excluded: skipped });
+      const diagnostic = describePlaybackError({ code: ErrorCode.PLAYBACK_FAILED }, song, nextIndex >= 0);
+      lastDiagnostic = diagnostic;
+      playerState.playing = false;
+      playerState.errorCode = diagnostic.code;
+      playerState.errorMessage = diagnostic.message;
+      await publishState();
+      if (nextIndex >= 0) {
+        cursor = nextIndex;
+        continue;
+      }
+      return { ok: false, error: diagnostic.code, message: diagnostic.message };
+    }
+    rememberShuffleIndex(cursor);
+    return { ok: true, state: playerState };
   }
-  if (requestId !== playRequestId) return { ok: true, discarded: true };
-  const result = await sendToPlayer({ type: MessageType.PLAY_SONG, url: playUrl, playbackId: requestId });
-  if (!result?.ok) {
-    excluded.add(index);
-    const nextIndex = getNextQueueIndex(queue, index, 1, { failed: true, excluded });
-    const diagnostic = describePlaybackError({ code: ErrorCode.PLAYBACK_FAILED }, song, nextIndex >= 0);
-    playerState.playing = false;
-    playerState.errorCode = diagnostic.code;
-    playerState.errorMessage = diagnostic.message;
-    await publishState();
-    if (nextIndex >= 0) return playQueueSong(queue, nextIndex, excluded);
-    return { ok: false, error: diagnostic.code, message: diagnostic.message };
-  }
-  return { ok: true, state: playerState };
+  return { ok: false, error: lastDiagnostic?.code || ErrorCode.PLAYBACK_FAILED, message: lastDiagnostic?.message || "队列中没有可播放的歌曲" };
 }
 
 function serializeError(error) {
@@ -151,7 +266,16 @@ async function move(offset, options = {}) {
   await initialize();
   const excluded = options.excluded || new Set();
   const nextIndex = getNextQueueIndex(playerState.queue, playerState.currentIndex, offset, { ...options, excluded });
-  if (nextIndex < 0) return { ok: true, state: playerState };
+  if (nextIndex < 0) {
+    // Report the boundary so the UI can tell the user instead of silently
+    // doing nothing, which reads as a frozen extension.
+    return {
+      ok: false,
+      error: "QUEUE_BOUNDARY",
+      message: offset < 0 ? "已经是第一首了" : "已经是最后一首了",
+      state: playerState
+    };
+  }
   return playQueueSong(playerState.queue, nextIndex, excluded);
 }
 
@@ -178,6 +302,11 @@ async function resumeCurrentSong() {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // Messages addressed to the offscreen document — including the liveness
+  // probe — are none of the service worker's business. Chrome usually keeps a
+  // sender from receiving its own broadcast, but answering here anyway could
+  // race the player's response and win it.
+  if (message.target === "offscreen") return false;
   (async () => {
     await initialize();
     if (message.target === "background" && message.type === MessageType.PLAYER_EVENT) {
@@ -274,9 +403,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse({ ok: true, library: await getUserLibrary(credential) });
       return;
     }
+    if (message.type === MessageType.GET_LIKED_SONGS) {
+      const credential = await requireCredential();
+      sendResponse({ ok: true, ...(await getLikedSongs(credential, message.begin)) });
+      return;
+    }
     if (message.type === MessageType.GET_PLAYLIST_DETAIL) {
       const credential = await requireCredential();
-      sendResponse({ ok: true, playlist: await getPlaylistDetail(message.playlist, credential) });
+      sendResponse({ ok: true, playlist: await getPlaylistDetail(message.playlist, credential, message.begin) });
       return;
     }
     if (message.type === MessageType.GET_TOPLISTS) {

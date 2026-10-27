@@ -97,14 +97,27 @@ audio.addEventListener("timeupdate", () => notifyProgress());
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.target !== "offscreen") return;
 
+  if (message.type === MessageType.PING) {
+    // The background polls this to learn that the document is alive and its
+    // listener is registered.
+    sendResponse({ ok: true });
+    return;
+  }
   if (message.type === MessageType.PLAY_SONG) {
     suppressEvents = false;
     activePlaybackId = Number(message.playbackId) || activePlaybackId + 1;
+    const playbackId = activePlaybackId;
     audio.src = message.url;
     lastProgressAt = 0;
     audio.play().then(() => sendResponse({ ok: true })).catch((error) => {
+      // Switching tracks aborts the pending play() of the previous track.
+      // That is a normal race, not a playback failure.
+      if (error?.name === "AbortError") {
+        sendResponse({ ok: true, aborted: true });
+        return;
+      }
       console.error("Audio playback failed", error);
-      sendResponse({ ok: false, error: "PLAYBACK_FAILED", message: "当前歌曲暂不可播放" });
+      sendResponse({ ok: false, error: "PLAYBACK_FAILED", message: "当前歌曲暂不可播放", playbackId });
     });
     return true;
   }
