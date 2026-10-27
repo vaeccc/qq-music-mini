@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "QQ Music Mini",
-  "version": "0.2.0",
-  "description": "极简 QQ 音乐浏览器播放器。",
+  "name": "__MSG_extensionName__",
+  "version": "0.2.1",
+  "description": "__MSG_extensionDescription__",
+  "default_locale": "zh_CN",
   "permissions": ["storage", "offscreen", "cookies"],
   "host_permissions": [
     "https://u.y.qq.com/*",
@@ -24,7 +25,7 @@
     "128": "icons/qq-music-mini-128.png"
   },
   "action": {
-    "default_title": "QQ Music Mini",
+    "default_title": "__MSG_extensionName__",
     "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/qq-music-mini-16.png",
