@@ -2,7 +2,7 @@ import { ErrorCode, MessageType, PlaybackMode, PlayerEvent, emptyPlayerState } f
 import { applyBrandIcon } from "./api/brand-icon.js";
 import { clearCredential, getCredential, getPlayerState, setCredential, setPlayerState } from "./storage/store.js";
 import { createQrLogin, pollQrLogin } from "./api/auth.js";
-import { getPlayUrl, getLikedSongs, getPlaylistDetail, getSingerSongs, getToplistDetail, getToplists, getUserLibrary, QQMusicError, refreshCredential, searchSongs, validateCredential } from "./api/qqmusic.js";
+import { getAlbumSongs, getPlayUrl, getLikedSongs, getPlaylistDetail, getSingerSongs, getToplistDetail, getToplists, getUserLibrary, QQMusicError, refreshCredential, searchSongs, validateCredential } from "./api/qqmusic.js";
 
 let playerState = emptyPlayerState();
 let initialized = false;
@@ -435,6 +435,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === MessageType.GET_SINGER_SONGS) {
       const credential = await requireCredential();
       sendResponse({ ok: true, singer: await getSingerSongs(message.singer, credential, message.begin) });
+      return;
+    }
+    if (message.type === MessageType.GET_ALBUM_SONGS) {
+      const credential = await requireCredential();
+      sendResponse({ ok: true, album: await getAlbumSongs(message.album, credential, message.begin) });
       return;
     }
     if (message.type === MessageType.PLAY) {

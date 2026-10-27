@@ -2,7 +2,10 @@ import { ErrorCode } from "./types.js";
 
 const MUSICU = "https://u.y.qq.com/cgi-bin/musicu.fcg";
 const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-const PRIMARY_SEARCH_TIMEOUT_MS = 2200;
+// The main search endpoint answers in roughly 1.2-2.5 s depending on the
+// keyword. A tighter budget made the request fall back to the smartbox
+// endpoint, which returns far fewer songs and no album matches at all.
+const PRIMARY_SEARCH_TIMEOUT_MS = 6000;
 // fcg_play_single_song.fcg silently truncates a request to 50 song ids, so the
 // toplist fallback has to be requested in chunks to keep every track.
 const SONG_DETAIL_CHUNK_SIZE = 50;
@@ -10,6 +13,12 @@ const SONG_DETAIL_CHUNK_SIZE = 50;
 const DETAIL_LOOKUP_BATCH_SIZE = 4;
 // Codes that mean "the credential itself is rejected" rather than "the request failed".
 const LOGIN_REJECTED_CODES = new Set([1000, 10004, 104400, 104401]);
+// The album APIs answer 104400 for an album that does not exist, which is the
+// same code the other endpoints use for a rejected login. Album lookups
+// therefore interpret it as "album not found" instead of "please sign in".
+const ALBUM_NOT_FOUND_CODES = new Set([104400, 1101]);
+// Page size for album track lists.
+const ALBUM_PAGE_SIZE = 50;
 
 export class QQMusicError extends Error {
   constructor(code, message, detail = {}) {
@@ -101,6 +110,33 @@ function normalizeSinger(raw = {}) {
     mid,
     name: valueAt(raw, ["name", "singer", "title"], "未知歌手"),
     cover: valueAt(raw, ["pic", "picurl", "picUrl"]).replace(/^http:/, "https:")
+  };
+}
+
+/**
+ * Normalizes an album record.
+ *
+ * Album covers are addressed by the album mid, so a cover URL can always be
+ * derived even when the source only hands out the identifier.
+ */
+function normalizeAlbum(raw = {}) {
+  const mid = valueAt(raw, ["mid", "albumMid", "albummid", "album.mid"]);
+  const singer = raw.singer || raw.singerList || raw.singerlist || [];
+  const artist = Array.isArray(singer)
+    ? singer.map((item) => item?.name || item?.title).filter(Boolean).join(" / ")
+    : valueAt(raw, ["singer", "singername", "artist"]);
+  const cover = String(valueAt(
+    raw,
+    ["pic", "picurl", "picUrl", "cover"],
+    mid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${mid}.jpg` : ""
+  )).replace(/^http:/, "https:");
+  return {
+    mid,
+    name: valueAt(raw, ["name", "albumName", "album.name", "title"]),
+    artist: artist || "",
+    cover,
+    publishDate: valueAt(raw, ["publishDate", "aDate", "time_public"]),
+    description: valueAt(raw, ["desc", "description"])
   };
 }
 
@@ -370,6 +406,7 @@ async function searchWithSmartbox(keyword, credential) {
   if (Number(data?.code) !== 0) throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { code: data?.code });
   const briefSongs = (data?.data?.song?.itemlist || []).map(normalizeSong).filter((song) => song.mid);
   const singers = (data?.data?.singer?.itemlist || []).map(normalizeSinger).filter((singer) => singer.mid);
+  const albums = (data?.data?.album?.itemlist || []).map(normalizeAlbum).filter((album) => album.mid);
   const normalizedKeyword = keyword.replace(/\s+/g, "").toLowerCase();
   const exactSinger = singers.find((singer) => singer.name.replace(/\s+/g, "").toLowerCase() === normalizedKeyword);
   if (exactSinger) {
@@ -379,6 +416,7 @@ async function searchWithSmartbox(keyword, credential) {
         return {
           songs: singerSongs.songs,
           singers,
+          albums: mergeAlbums(albums, collectAlbumsFromSongs(singerSongs.songs)),
           searchPaging: { singer: exactSinger, total: singerSongs.total }
         };
       }
@@ -409,7 +447,20 @@ async function searchWithSmartbox(keyword, credential) {
     }));
     songs.push(...detailed);
   }
-  return { songs, singers };
+  // A keyword that names an album returns no songs from smartbox, only the
+  // albums. Listing their tracks keeps the song section useful and gives the
+  // album entries their release titles.
+  if (!songs.length && albums.length) {
+    for (const album of albums.slice(0, 2)) {
+      try {
+        const detail = await getAlbumSongs(album, credential, 0);
+        songs.push(...detail.songs);
+      } catch (error) {
+        console.warn("QQ Music album track lookup failed", album.mid, error);
+      }
+    }
+  }
+  return { songs, singers, albums: mergeAlbums(albums, collectAlbumsFromSongs(songs)) };
 }
 
 export async function searchSongs(keyword, credential) {
@@ -431,6 +482,7 @@ export async function searchSongs(keyword, credential) {
     const songs = (data?.data?.song?.list || data?.song?.list || []).map(normalizeSong).filter((song) => song.mid);
     if (!songs.length) return searchWithSmartbox(keyword, credential);
     let singers = [];
+    let albums = [];
     try {
       const singerUrl = new URL("https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg");
       singerUrl.searchParams.set("key", keyword);
@@ -439,12 +491,13 @@ export async function searchSongs(keyword, credential) {
       if (singerResponse.ok) {
         const singerData = await singerResponse.json();
         singers = (singerData?.data?.singer?.itemlist || []).map(normalizeSinger).filter((singer) => singer.mid);
+        albums = (singerData?.data?.album?.itemlist || []).map(normalizeAlbum).filter((album) => album.mid);
       }
     } catch (error) {
-      // Singer suggestions enhance ordinary song search, but must not block it.
+      // Singer and album suggestions enhance ordinary song search, but must not block it.
       console.warn("QQ Music singer suggestions failed", error);
     }
-    return { songs, singers };
+    return { songs, singers, albums: mergeAlbums(albums, collectAlbumsFromSongs(songs)) };
   } catch (error) {
     console.error("QQ Music search failed", error);
     return searchWithSmartbox(keyword, credential);
@@ -466,6 +519,119 @@ export async function getSingerSongs(singer, credential, begin = 0) {
     singer,
     total: Number(data?.totalNum || 0),
     songs: (data?.songList || []).map((item) => normalizeSong(item?.songInfo || item)).filter((song) => song.mid)
+  };
+}
+
+/**
+ * Searches for albums.
+ *
+ * QQ Music only exposes album search through the smartbox suggestion
+ * endpoint, and that endpoint hard-caps the result at two entries. To widen
+ * the coverage the tracks returned by the song search are folded back into
+ * albums as well: every track carries the `album.mid` of the release it
+ * belongs to, so a keyword like "周杰伦" surfaces the albums those tracks
+ * were taken from. Both sources use the same album mid and can be merged.
+ */
+export async function searchAlbums(keyword, credential) {
+  const url = new URL("https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg");
+  url.searchParams.set("key", keyword);
+  url.searchParams.set("format", "json");
+  const response = await fetch(url, { credentials: "include" });
+  if (!response.ok) throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { status: response.status });
+  const data = await response.json();
+  if (Number(data?.code) !== 0) throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { code: data?.code });
+  const albums = (data?.data?.album?.itemlist || []).map(normalizeAlbum).filter((album) => album.mid);
+  return { albums };
+}
+
+/**
+ * Collects the albums that the given songs belong to.
+ *
+ * This is the second half of `searchAlbums`: the smartbox endpoint only
+ * offers two albums, while the tracks of a song search usually mention many
+ * more releases.
+ */
+export function collectAlbumsFromSongs(songs) {
+  const byMid = new Map();
+  for (const song of songs || []) {
+    const albumMid = song?.albumMid;
+    if (!albumMid) continue;
+    const existing = byMid.get(albumMid);
+    if (existing) {
+      existing.songCount = (existing.songCount || 1) + 1;
+      if (!existing.artist && song.artist) existing.artist = song.artist;
+      continue;
+    }
+    byMid.set(albumMid, {
+      mid: albumMid,
+      name: song.album || "",
+      artist: song.artist || "",
+      cover: song.cover || `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}.jpg`,
+      songCount: 1
+    });
+  }
+  return [...byMid.values()];
+}
+
+/**
+ * Merges album candidates into one list.
+ *
+ * The order is the one the search endpoints produced: the albums QQ Music
+ * suggests for the keyword come first in their own ranking, followed by the
+ * albums that the matching tracks belong to, in the order those tracks were
+ * returned. No extra scoring is applied, so the list mirrors what the user
+ * would see on the QQ Music site.
+ */
+export function mergeAlbums(primary, secondary) {
+  const byMid = new Map();
+  for (const album of primary || []) {
+    if (!album?.mid) continue;
+    const existing = byMid.get(album.mid);
+    byMid.set(album.mid, existing ? { ...existing, ...album } : { ...album });
+  }
+  for (const album of secondary || []) {
+    if (!album?.mid) continue;
+    const existing = byMid.get(album.mid);
+    if (existing) {
+      byMid.set(album.mid, { ...album, ...existing, songCount: album.songCount });
+      continue;
+    }
+    byMid.set(album.mid, { ...album });
+  }
+  return [...byMid.values()];
+}
+
+/**
+ * Loads the tracks of an album.
+ *
+ * `order: 2` returns the tracks in release order; the default order shuffles
+ * them, which would make the album page look arbitrary. The endpoint answers
+ * 104400 for an album that does not exist, which must not be mistaken for an
+ * expired login.
+ */
+export async function getAlbumSongs(album, credential, begin = 0) {
+  if (!album?.mid) throw new QQMusicError(ErrorCode.NETWORK, "专辑信息无效");
+  const start = Math.max(0, Number(begin) || 0);
+  const response = await musicu({
+    req_0: {
+      module: "music.musichallAlbum.AlbumSongList",
+      method: "GetAlbumSongList",
+      param: { albumMid: album.mid, begin: start, num: ALBUM_PAGE_SIZE, order: 2 }
+    }
+  }, credential);
+  const code = Number(response?.req_0?.code ?? 0);
+  if (ALBUM_NOT_FOUND_CODES.has(code)) {
+    throw new QQMusicError(ErrorCode.NETWORK, "该专辑暂无歌曲或已下架", { code, albumMid: album.mid });
+  }
+  const data = checkResponse(response.req_0, "album-songs");
+  const songs = (data?.songList || [])
+    .map((item) => normalizeSong(item?.songInfo || item))
+    .filter((song) => song.mid);
+  return {
+    title: album.name || "",
+    album,
+    total: Number(data?.totalNum || 0),
+    songs
   };
 }
 
