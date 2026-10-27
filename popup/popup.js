@@ -2,6 +2,8 @@ import { MessageType, PlaybackMode } from "../api/types.js";
 import { icon } from "./icons.js";
 
 const state = { tab: "liked", library: null, toplists: null, chartDetail: null, chartPaging: null, searchKeyword: "", searchResults: [], singerResults: [], albumResults: [], searchPaging: null, detail: null, detailPaging: null, singerDetail: null, albumDetail: null, player: null, seeking: false, poll: null, noticeTimer: null, viewRequestId: 0, errorShownFor: "", likedPaging: null };
+const defaultTheme = { accent: "#18b768", dark: "#0c8d4d", wash: "#e9f8ef" };
+const themeState = { cover: "", requestId: 0, cache: new Map() };
 const elements = {
   notice: document.querySelector("#notice"), login: document.querySelector("#login-view"), music: document.querySelector("#music-view"), accountWrap: document.querySelector("#account-wrap"), account: document.querySelector("#account-button"), accountMenu: document.querySelector("#account-menu"), accountAvatar: document.querySelector("#account-avatar"), accountName: document.querySelector("#account-name"), accountId: document.querySelector("#account-id"), logout: document.querySelector("#logout-button"), qr: document.querySelector("#qr-panel"), qrImage: document.querySelector("#qr-image"), qrStatus: document.querySelector("#qr-status"), content: document.querySelector("#content"), brand: document.querySelector("#brand-mark"), playerTitle: document.querySelector("#player-title"), playerArtist: document.querySelector("#player-artist"), playerCover: document.querySelector("#player-cover"), mode: document.querySelector("#mode-button"), toggle: document.querySelector("#toggle-button"), progress: document.querySelector("#progress-slider"), currentTime: document.querySelector("#player-current-time"), duration: document.querySelector("#player-duration")
 };
@@ -33,8 +35,53 @@ function showLoginView() { elements.login.hidden = false; elements.music.hidden 
 function showMusicView() { elements.login.hidden = true; elements.music.hidden = false; elements.accountWrap.hidden = false; }
 function renderAccount(user = {}) { const name = String(user.nickname || "QQ 音乐账号"); elements.accountName.textContent = name; elements.accountId.textContent = user.musicid ? `QQ 音乐 ID：${user.musicid}` : "已登录"; elements.accountAvatar.style.backgroundImage = user.avatar ? `url("${user.avatar}")` : ""; elements.accountAvatar.textContent = user.avatar ? "" : (name.trim().charAt(0) || "Q"); }
 function setCover(node, url) { node.style.backgroundImage = url ? `url("${url}")` : ""; node.innerHTML = url ? "" : icon("note"); }
+function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
+function rgbToHsl(red, green, blue) {
+  const r = red / 255; const g = green / 255; const b = blue / 255; const max = Math.max(r, g, b); const min = Math.min(r, g, b); const lightness = (max + min) / 2;
+  if (max === min) return { h: 0, s: 0, l: lightness };
+  const delta = max - min; const saturation = lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min); let hue;
+  if (max === r) hue = (g - b) / delta + (g < b ? 6 : 0); else if (max === g) hue = (b - r) / delta + 2; else hue = (r - g) / delta + 4;
+  return { h: hue / 6, s: saturation, l: lightness };
+}
+function hslColor(h, s, l) { return `hsl(${Math.round(h * 360)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%)`; }
+function applyTheme(theme = defaultTheme) { const root = document.documentElement; root.style.setProperty("--green", theme.accent); root.style.setProperty("--green-dark", theme.dark); root.style.setProperty("--green-wash", theme.wash); }
+async function sampleCoverColor(url) {
+  const response = await fetch(url, { credentials: "omit", cache: "force-cache" });
+  if (!response.ok) throw new Error(`cover request failed: ${response.status}`);
+  const bitmap = await createImageBitmap(await response.blob());
+  const canvas = document.createElement("canvas"); canvas.width = 32; canvas.height = 32;
+  const context = canvas.getContext("2d", { willReadFrequently: true }); context.drawImage(bitmap, 0, 0, 32, 32); bitmap.close();
+  const pixels = context.getImageData(0, 0, 32, 32).data; let red = 0; let green = 0; let blue = 0; let weightSum = 0;
+  for (let index = 0; index < pixels.length; index += 4) {
+    const alpha = pixels[index + 3] / 255; if (alpha < 0.75) continue;
+    const hsl = rgbToHsl(pixels[index], pixels[index + 1], pixels[index + 2]);
+    if (hsl.l < 0.08 || hsl.l > 0.95) continue;
+    const weight = Math.max(0.08, hsl.s) * alpha;
+    red += pixels[index] * weight; green += pixels[index + 1] * weight; blue += pixels[index + 2] * weight; weightSum += weight;
+  }
+  if (!weightSum) return null;
+  const color = rgbToHsl(red / weightSum, green / weightSum, blue / weightSum);
+  const hue = color.s < 0.12 ? 0.4 : color.h;
+  const saturation = clamp(Math.max(color.s, 0.55), 0.55, 0.82);
+  const lightness = clamp(color.l, 0.42, 0.56);
+  return { accent: hslColor(hue, saturation, lightness), dark: hslColor(hue, saturation, clamp(lightness - 0.16, 0.28, 0.42)), wash: hslColor(hue, 0.52, 0.94) };
+}
+function updateThemeFromCover(url) {
+  if (themeState.cover === url) return;
+  themeState.cover = url; const requestId = ++themeState.requestId;
+  if (!url) { applyTheme(); return; }
+  const cached = themeState.cache.get(url);
+  if (cached) { applyTheme(cached); return; }
+  sampleCoverColor(url).then((theme) => {
+    if (requestId !== themeState.requestId) return;
+    if (!theme) { applyTheme(); return; }
+    themeState.cache.set(url, theme);
+    if (themeState.cache.size > 32) themeState.cache.delete(themeState.cache.keys().next().value);
+    applyTheme(theme);
+  }).catch(() => { if (requestId === themeState.requestId) applyTheme(); });
+}
 function formatTime(seconds) { const value = Math.max(0, Math.floor(Number(seconds) || 0)); return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, "0")}`; }
-function renderPlayer(player) { state.player = player; const song = player?.currentSong; const songKey = String(song?.mid || song?.id || ""); const duration = Math.max(0, Number(player?.duration) || 0); const currentTime = Math.min(Math.max(0, Number(player?.currentTime) || 0), duration || Infinity); const mode = playbackModes.find((item) => item.value === player?.playMode) || playbackModes[0]; if (!state.seeking) { elements.progress.max = String(Math.max(0, Math.floor(duration))); elements.progress.value = String(Math.floor(currentTime)); elements.currentTime.textContent = formatTime(currentTime); } const displayTime = state.seeking ? Number(elements.progress.value) || 0 : currentTime; elements.playerTitle.textContent = song?.title || "暂无播放歌曲"; elements.playerArtist.textContent = song?.artist || ""; setCover(elements.playerCover, song?.cover); elements.mode.innerHTML = icon(mode.icon); elements.mode.title = mode.label; elements.mode.setAttribute("aria-label", `播放模式：${mode.label}`); elements.toggle.innerHTML = icon(player?.playing ? "pause" : "play"); elements.toggle.setAttribute("aria-label", player?.playing ? "暂停" : "播放"); elements.duration.textContent = formatTime(duration); elements.progress.disabled = !song || duration <= 0; elements.progress.style.setProperty("--progress", duration > 0 ? `${displayTime / duration * 100}%` : "0%"); document.querySelectorAll(".song-row").forEach((row) => { const active = Boolean(songKey && row.dataset.songKey === songKey); row.classList.toggle("active", active); row.setAttribute("aria-current", active ? "true" : "false"); }); if (player?.errorMessage) showPlaybackError(player.errorMessage, skippableError(player.errorCode) ? 5000 : 0); else showPlaybackError("", 0); }
+function renderPlayer(player) { state.player = player; const song = player?.currentSong; const songKey = String(song?.mid || song?.id || ""); const duration = Math.max(0, Number(player?.duration) || 0); const currentTime = Math.min(Math.max(0, Number(player?.currentTime) || 0), duration || Infinity); const mode = playbackModes.find((item) => item.value === player?.playMode) || playbackModes[0]; if (!state.seeking) { elements.progress.max = String(Math.max(0, Math.floor(duration))); elements.progress.value = String(Math.floor(currentTime)); elements.currentTime.textContent = formatTime(currentTime); } const displayTime = state.seeking ? Number(elements.progress.value) || 0 : currentTime; elements.playerTitle.textContent = song?.title || "暂无播放歌曲"; elements.playerArtist.textContent = song?.artist || ""; setCover(elements.playerCover, song?.cover); updateThemeFromCover(song?.cover || ""); elements.mode.innerHTML = icon(mode.icon); elements.mode.title = mode.label; elements.mode.setAttribute("aria-label", `播放模式：${mode.label}`); elements.toggle.innerHTML = icon(player?.playing ? "pause" : "play"); elements.toggle.setAttribute("aria-label", player?.playing ? "暂停" : "播放"); elements.duration.textContent = formatTime(duration); elements.progress.disabled = !song || duration <= 0; elements.progress.style.setProperty("--progress", duration > 0 ? `${displayTime / duration * 100}%` : "0%"); document.querySelectorAll(".song-row").forEach((row) => { const active = Boolean(songKey && row.dataset.songKey === songKey); row.classList.toggle("active", active); row.setAttribute("aria-current", active ? "true" : "false"); }); if (player?.errorMessage) showPlaybackError(player.errorMessage, skippableError(player.errorCode) ? 5000 : 0); else showPlaybackError("", 0); }
 function skippableError(code) { return ["NO_PERMISSION", "NO_COPYRIGHT", "PLAY_URL", "PLAYBACK_FAILED"].includes(code); }
 /**
  * Binds the "scroll to the bottom" handler of the content area.
