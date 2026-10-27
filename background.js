@@ -172,6 +172,14 @@ function getNextQueueIndex(queue, currentIndex, offset, { automatic = false, fai
     if (candidates.length) return candidates[Math.floor(Math.random() * candidates.length)];
     return automatic && !failed && !excluded.has(currentIndex) ? currentIndex : -1;
   }
+  if (playerState.playMode === PlaybackMode.LIST_LOOP) {
+    const direction = offset < 0 ? -1 : 1;
+    for (let distance = 1; distance <= queue.length; distance += 1) {
+      const candidate = (currentIndex + direction * distance + queue.length) % queue.length;
+      if (!excluded.has(candidate)) return candidate;
+    }
+    return -1;
+  }
   const direction = offset < 0 ? -1 : 1;
   for (let index = currentIndex + direction; index >= 0 && index < queue.length; index += direction) {
     if (!excluded.has(index)) return index;

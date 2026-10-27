@@ -9,6 +9,7 @@ const elements = {
 };
 const playbackModes = [
   { value: PlaybackMode.ORDER, label: "顺序播放", icon: "order" },
+  { value: PlaybackMode.LIST_LOOP, label: "列表循环", icon: "repeatAll" },
   { value: PlaybackMode.REPEAT_ONE, label: "单曲循环", icon: "repeatOne" },
   { value: PlaybackMode.SHUFFLE, label: "随机播放", icon: "shuffle" }
 ];

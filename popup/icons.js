@@ -6,6 +6,7 @@ const paths = Object.freeze({
   play: '<path d="M7.25 5.15a1.15 1.15 0 0 1 1.78-.96l9.2 6.28a1.15 1.15 0 0 1 0 1.9l-9.2 6.28a1.15 1.15 0 0 1-1.78-.96V5.15Z" fill="currentColor" stroke="none"/>',
   pause: '<rect x="6.75" y="5" width="4" height="14" rx="1.35" fill="currentColor" stroke="none"/><rect x="13.25" y="5" width="4" height="14" rx="1.35" fill="currentColor" stroke="none"/>',
   order: '<path d="M4.5 6.5h14M4.5 11.5h14M4.5 16.5h9.5M17 14l3 3-3 3"/>',
+  repeatAll: '<path d="m17 4 3 3-3 3M20 7H8a4 4 0 0 0-4 4v1M7 20l-3-3 3-3M4 17h12a4 4 0 0 0 4-4v-1"/>',
   repeatOne: '<path d="m17 4 3 3-3 3M20 7H8a4 4 0 0 0-4 4v1M7 20l-3-3 3-3M4 17h12a4 4 0 0 0 4-4v-1M10.75 11l1.75-1.25V15"/>',
   shuffle: '<path d="M3.5 7h2.25c4.75 0 7 10 12 10h2.75M17.5 14l3 3-3 3M3.5 17h2.25c1.8 0 3.15-1.35 4.35-3.1M13.9 9.8C15 8.2 16.3 7 18.25 7h2.25M17.5 4l3 3-3 3"/>',
   back: '<path d="m13.5 5-7 7 7 7M7 12h11"/>'

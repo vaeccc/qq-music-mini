@@ -47,6 +47,7 @@ export const ErrorCode = Object.freeze({
 
 export const PlaybackMode = Object.freeze({
   ORDER: "order",
+  LIST_LOOP: "list-loop",
   REPEAT_ONE: "repeat-one",
   SHUFFLE: "shuffle"
 });
