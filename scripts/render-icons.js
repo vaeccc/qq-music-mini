@@ -1,48 +1,42 @@
-import { deflateSync } from "node:zlib";
-import { mkdirSync, writeFileSync } from "node:fs";
+// Guard script for extension icons.
+//
+// The shipped PNGs (icons/qq-music-mini-{16,32,128}.png) were produced from
+// icons/qq-music-mini.svg (green Mingcute music glyph, transparent background)
+// and are committed to the repository. Node without dependencies cannot
+// rasterize SVG paths, so this script must NOT regenerate them — an earlier
+// version of this file painted an outdated yellow circle that would have
+// overwritten the correct artwork on the next run.
+//
+// What it does now:
+//   1. Verifies every PNG referenced by manifest.json exists.
+//   2. Refuses to overwrite any existing PNG (nothing is written, ever).
+//   3. Reports leftover artwork that is not referenced by the manifest.
 
-const OUT = new URL("../icons/", import.meta.url);
+import { existsSync, readFileSync } from "node:fs";
 
-function crc32(buffer) {
-  let crc = 0xffffffff;
-  for (const byte of buffer) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+const ROOT = new URL("..", import.meta.url);
+const ICONS = new URL("../icons/", import.meta.url);
+
+const manifest = JSON.parse(readFileSync(new URL("manifest.json", ROOT), "utf8"));
+const referenced = new Set([
+  ...Object.values(manifest.icons || {}),
+  ...Object.values(manifest.action?.default_icon || {})
+]);
+
+let ok = true;
+for (const path of referenced) {
+  const file = new URL(path, ROOT);
+  if (existsSync(file)) {
+    console.log(`ok      ${path}`);
+  } else {
+    console.error(`MISSING ${path} — restore it from git (git checkout -- ${path})`);
+    ok = false;
   }
-  return (crc ^ 0xffffffff) >>> 0;
 }
 
-function chunk(type, data) {
-  const tag = Buffer.from(type);
-  const length = Buffer.alloc(4); length.writeUInt32BE(data.length);
-  const checksum = Buffer.alloc(4); checksum.writeUInt32BE(crc32(Buffer.concat([tag, data])));
-  return Buffer.concat([length, tag, data, checksum]);
-}
+if (!ok) process.exit(1);
 
-function paint(size) {
-  const pixels = Buffer.alloc(size * (size * 4 + 1));
-  for (let y = 0; y < size; y += 1) {
-    const row = y * (size * 4 + 1); pixels[row] = 0;
-    for (let x = 0; x < size; x += 1) {
-      const index = row + 1 + x * 4;
-      const dx = x + .5 - size * .5, dy = y + .5 - size * .5;
-      if (Math.hypot(dx, dy) > size * .47) continue;
-      const shade = y / size;
-      pixels[index] = Math.round(254 - shade * 3);
-      pixels[index + 1] = Math.round(218 - shade * 25);
-      pixels[index + 2] = Math.round(29 - shade * 22);
-      pixels[index + 3] = 255;
-      // A compact green eighth note keeps the PNG fallback recognizable at 16px.
-      const scale = size / 100;
-      const head = (x - 39 * scale) ** 2 + (y - 65 * scale) ** 2 <= (10 * scale) ** 2;
-      const stem = x >= 47 * scale && x <= 56 * scale && y >= 29 * scale && y <= 65 * scale;
-      const flag = y >= 27 * scale && y <= 37 * scale && x >= 54 * scale && x <= 76 * scale && y <= (x * -.32 + 54) * scale;
-      if (head || stem || flag) { pixels[index] = 13; pixels[index + 1] = 175; pixels[index + 2] = 82; }
-    }
-  }
-  const header = Buffer.alloc(13); header.writeUInt32BE(size, 0); header.writeUInt32BE(size, 4); header[8] = 8; header[9] = 6;
-  return Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), chunk("IHDR", header), chunk("IDAT", deflateSync(pixels)), chunk("IEND", Buffer.alloc(0))]);
-}
-
-mkdirSync(OUT, { recursive: true });
-for (const size of [16, 32, 48, 128]) writeFileSync(new URL(`qq-music-mini-${size}.png`, OUT), paint(size));
+// Never write PNGs. To change the icon, edit icons/qq-music-mini.svg, export
+// PNGs at 16/32/128 with an external rasterizer, then commit all four files.
+console.log("\nIcons verified. This script intentionally never regenerates PNGs —");
+console.log("edit icons/qq-music-mini.svg and rasterize externally instead.");
