@@ -1,7 +1,7 @@
 import { MessageType, PlaybackMode } from "../api/types.js";
 import { icon } from "./icons.js";
 
-const state = { tab: "liked", library: null, toplists: null, chartDetail: null, chartPaging: null, searchKeyword: "", searchResults: [], singerResults: [], albumResults: [], searchPaging: null, searchCache: new Map(), searchRequestId: 0, detail: null, detailPaging: null, singerDetail: null, albumDetail: null, player: null, seeking: false, poll: null, noticeTimer: null, viewRequestId: 0, errorShownFor: "", lastDiagnostic: null, likedPaging: null };
+const state = { tab: "liked", library: null, toplists: null, chartDetail: null, chartPaging: null, searchKeyword: "", searchResults: [], singerResults: [], albumResults: [], searchPaging: null, searchCache: new Map(), searchRequestId: 0, detail: null, detailPaging: null, singerDetail: null, albumDetail: null, player: null, seeking: false, poll: null, noticeTimer: null, viewRequestId: 0, errorShownFor: "", lastDiagnostic: null, likedPaging: null, lastPlayerKey: "", lastPlayerMode: "", lastPlayerPlaying: null, lastPlayerError: "" };
 const defaultTheme = { accent: "#18b768", dark: "#0c8d4d", wash: "#e9f8ef" };
 const themeState = { cover: "", requestId: 0, cache: new Map() };
 const elements = {
@@ -94,7 +94,46 @@ function updateThemeFromCover(url) {
   }).catch(() => { if (requestId === themeState.requestId) applyTheme(); });
 }
 function formatTime(seconds) { const value = Math.max(0, Math.floor(Number(seconds) || 0)); return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, "0")}`; }
-function renderPlayer(player) { state.player = player; const song = player?.currentSong; const songKey = String(song?.mid || song?.id || ""); const duration = Math.max(0, Number(player?.duration) || 0); const currentTime = Math.min(Math.max(0, Number(player?.currentTime) || 0), duration || Infinity); const mode = playbackModes.find((item) => item.value === player?.playMode) || playbackModes[0]; if (!state.seeking) { elements.progress.max = String(Math.max(0, Math.floor(duration))); elements.progress.value = String(Math.floor(currentTime)); elements.currentTime.textContent = formatTime(currentTime); } const displayTime = state.seeking ? Number(elements.progress.value) || 0 : currentTime; elements.playerTitle.textContent = song?.title || "暂无播放歌曲"; elements.playerArtist.textContent = song?.artist || ""; setCover(elements.playerCover, song?.cover); updateThemeFromCover(song?.cover || ""); elements.mode.innerHTML = icon(mode.icon); elements.mode.title = mode.label; elements.mode.setAttribute("aria-label", `播放模式：${mode.label}`); elements.toggle.innerHTML = icon(player?.playing ? "pause" : "play"); elements.toggle.title = player?.playing ? "暂停" : "播放"; elements.toggle.setAttribute("aria-label", player?.playing ? "暂停" : "播放"); const previous = document.querySelector('[data-control="previous"]'); const next = document.querySelector('[data-control="next"]'); if (previous) previous.title = "上一首"; if (next) next.title = "下一首"; elements.duration.textContent = formatTime(duration); elements.progress.disabled = !song || duration <= 0; elements.progress.style.setProperty("--progress", duration > 0 ? `${displayTime / duration * 100}%` : "0%"); document.querySelectorAll(".song-row").forEach((row) => { const active = Boolean(songKey && row.dataset.songKey === songKey); row.classList.toggle("active", active); row.setAttribute("aria-current", active ? "true" : "false"); }); if (player?.errorMessage) showPlaybackError(player.errorMessage, skippableError(player.errorCode) ? 5000 : 0, player.errorCode); else showPlaybackError("", 0); }
+function renderPlayer(player) {
+  state.player = player;
+  const song = player?.currentSong;
+  const songKey = String(song?.mid || song?.id || "");
+  const duration = Math.max(0, Number(player?.duration) || 0);
+  const currentTime = Math.min(Math.max(0, Number(player?.currentTime) || 0), duration || Infinity);
+  const mode = playbackModes.find((item) => item.value === player?.playMode) || playbackModes[0];
+  if (!state.seeking) { elements.progress.max = String(Math.max(0, Math.floor(duration))); elements.progress.value = String(Math.floor(currentTime)); elements.currentTime.textContent = formatTime(currentTime); }
+  const displayTime = state.seeking ? Number(elements.progress.value) || 0 : currentTime;
+  // The player publishes progress every 500 ms, so the cheap parts (progress
+  // bar, clock) update on every event, but the expensive parts — rebuilding the
+  // SVG icons, re-sampling the cover, and scanning every song row for the
+  // active highlight — only run when something actually changed.
+  const changed = songKey !== state.lastPlayerKey || mode.value !== state.lastPlayerMode || Boolean(player?.playing) !== state.lastPlayerPlaying || (player?.errorMessage || "") !== state.lastPlayerError;
+  if (changed) {
+    state.lastPlayerKey = songKey;
+    state.lastPlayerMode = mode.value;
+    state.lastPlayerPlaying = Boolean(player?.playing);
+    state.lastPlayerError = player?.errorMessage || "";
+    elements.playerTitle.textContent = song?.title || "暂无播放歌曲";
+    elements.playerArtist.textContent = song?.artist || "";
+    setCover(elements.playerCover, song?.cover);
+    updateThemeFromCover(song?.cover || "");
+    elements.mode.innerHTML = icon(mode.icon);
+    elements.mode.title = mode.label;
+    elements.mode.setAttribute("aria-label", `播放模式：${mode.label}`);
+    elements.toggle.innerHTML = icon(player?.playing ? "pause" : "play");
+    elements.toggle.title = player?.playing ? "暂停" : "播放";
+    elements.toggle.setAttribute("aria-label", player?.playing ? "暂停" : "播放");
+    const previous = document.querySelector('[data-control="previous"]');
+    const next = document.querySelector('[data-control="next"]');
+    if (previous) previous.title = "上一首";
+    if (next) next.title = "下一首";
+    document.querySelectorAll(".song-row").forEach((row) => { const active = Boolean(songKey && row.dataset.songKey === songKey); row.classList.toggle("active", active); row.setAttribute("aria-current", active ? "true" : "false"); });
+    if (player?.errorMessage) showPlaybackError(player.errorMessage, skippableError(player.errorCode) ? 5000 : 0, player.errorCode); else showPlaybackError("", 0);
+  }
+  elements.duration.textContent = formatTime(duration);
+  elements.progress.disabled = !song || duration <= 0;
+  elements.progress.style.setProperty("--progress", duration > 0 ? `${displayTime / duration * 100}%` : "0%");
+}
 function skippableError(code) { return ["NO_PERMISSION", "NO_COPYRIGHT", "PLAY_URL", "PLAYBACK_FAILED"].includes(code); }
 /**
  * Binds the "scroll to the bottom" handler of the content area.
@@ -151,11 +190,11 @@ async function loadMoreLikedSongs() {
   const tab = state.tab;
   paging.loadingMore = true;
   const scrollTop = elements.content.scrollTop;
-  renderLiked();
+  updateLoadStatus(elements.content, paging, state.library?.liked?.length || 0);
   const result = await message(MessageType.GET_LIKED_SONGS, { begin: state.library?.liked?.length || 0 });
   if (state.likedPaging !== paging || state.tab !== tab) { paging.loadingMore = false; return; }
   paging.loadingMore = false;
-  if (!result.ok) { showError(result, "加载更多歌曲失败"); renderLiked(); return; }
+  if (!result.ok) { showError(result, "加载更多歌曲失败"); updateLoadStatus(elements.content, paging, state.library?.liked?.length || 0); return; }
   const previousLength = state.library?.liked?.length || 0;
   const known = new Set((state.library?.liked || []).map((song) => String(song.mid || song.id || "")));
   const added = uniqueSongs(result.songs || []).filter((song) => !known.has(String(song.mid || song.id || "")));
@@ -200,11 +239,11 @@ async function loadMorePlaylistSongs() {
   if (!paging || paging.loadingMore || paging.complete) return;
   paging.loadingMore = true;
   const scrollTop = elements.content.scrollTop;
-  renderPlaylistDetail(scrollTop);
+  updateLoadStatus(elements.content, paging, state.detail?.songs?.length || 0);
   const result = await message(MessageType.GET_PLAYLIST_DETAIL, { playlist: { id: state.detail.id, dirid: state.detail.dirid, title: state.detail.title }, begin: state.detail.songs.length });
   if (state.detailPaging !== paging) return;
   paging.loadingMore = false;
-  if (!result.ok) { showError(result, "加载更多歌曲失败"); renderPlaylistDetail(scrollTop); return; }
+  if (!result.ok) { showError(result, "加载更多歌曲失败"); updateLoadStatus(elements.content, paging, state.detail?.songs?.length || 0); return; }
   const previousLength = state.detail.songs.length;
   const known = new Set(state.detail.songs.map((song) => String(song.mid || song.id || "")));
   const added = uniqueSongs(result.playlist?.songs || []).filter((song) => !known.has(String(song.mid || song.id || "")));
@@ -228,11 +267,11 @@ async function loadMoreToplistSongs() {
   if (!detail || !paging || paging.loadingMore || paging.complete) return;
   paging.loadingMore = true;
   const scrollTop = elements.content.scrollTop;
-  renderToplistDetail(scrollTop);
+  updateLoadStatus(elements.content, paging, detail.songs.length, "榜单歌曲");
   const result = await message(MessageType.GET_TOPLIST_DETAIL, { toplist: { id: detail.id, title: detail.title, cover: detail.cover }, offset: detail.songs.length });
   if (state.chartDetail !== detail || state.chartPaging !== paging) return;
   paging.loadingMore = false;
-  if (!result.ok) { showError(result, "加载更多榜单歌曲失败"); renderToplistDetail(scrollTop); return; }
+  if (!result.ok) { showError(result, "加载更多榜单歌曲失败"); updateLoadStatus(elements.content, paging, detail.songs.length, "榜单歌曲"); return; }
   const previousLength = detail.songs.length;
   const known = new Set(detail.songs.map((song) => String(song.mid || song.id || "")));
   const added = uniqueSongs(result.toplist?.songs || []).filter((song) => !known.has(String(song.mid || song.id || "")));
@@ -260,11 +299,12 @@ async function openAlbum(album) { showNotice("正在加载专辑…", "info"); c
 async function loadMoreAlbumSongs() {
   const detail = state.albumDetail;
   if (!detail || detail.loadingMore || detail.complete) return;
-  detail.loadingMore = true; const scrollTop = elements.content.scrollTop; renderAlbumDetail(scrollTop);
+  detail.loadingMore = true; const scrollTop = elements.content.scrollTop;
+  updateLoadStatus(elements.content, detail, detail.songs.length);
   const result = await message(MessageType.GET_ALBUM_SONGS, { album: detail.album, begin: detail.songs.length });
   if (state.albumDetail !== detail) return;
   detail.loadingMore = false;
-  if (!result.ok) { showError(result, "加载更多歌曲失败"); renderAlbumDetail(scrollTop); return; }
+  if (!result.ok) { showError(result, "加载更多歌曲失败"); updateLoadStatus(elements.content, detail, detail.songs.length); return; }
   const previousLength = detail.songs.length;
   const known = new Set(detail.songs.map((song) => String(song.mid || song.id || "")));
   const added = uniqueSongs(result.album.songs || []).filter((song) => !known.has(String(song.mid || song.id || "")));
@@ -295,11 +335,12 @@ async function openSinger(singer) { showNotice("正在加载歌手歌曲…", "i
 async function loadMoreSingerSongs() {
   const detail = state.singerDetail;
   if (!detail || detail.loadingMore || detail.complete) return;
-  detail.loadingMore = true; const scrollTop = elements.content.scrollTop; renderSingerDetail(scrollTop);
+  detail.loadingMore = true; const scrollTop = elements.content.scrollTop;
+  updateLoadStatus(elements.content, detail, detail.songs.length);
   const result = await message(MessageType.GET_SINGER_SONGS, { singer: detail.singer, begin: detail.songs.length });
   if (state.singerDetail !== detail) return;
   detail.loadingMore = false;
-  if (!result.ok) { showError(result, "加载更多歌曲失败"); renderSingerDetail(scrollTop); return; }
+  if (!result.ok) { showError(result, "加载更多歌曲失败"); updateLoadStatus(elements.content, detail, detail.songs.length); return; }
   const previousLength = detail.songs.length;
   const known = new Set(detail.songs.map((song) => String(song.mid || song.id || "")));
   const added = uniqueSongs(result.singer.songs || []).filter((song) => !known.has(String(song.mid || song.id || "")));
@@ -314,11 +355,12 @@ async function loadMoreSearchSongs() {
   const paging = state.searchPaging;
   if (!paging || paging.loadingMore || paging.complete) return;
   const tab = state.tab;
-  paging.loadingMore = true; const scrollTop = elements.content.scrollTop; renderSearch(scrollTop);
+  paging.loadingMore = true; const scrollTop = elements.content.scrollTop;
+  updateLoadStatus(elements.content, paging, state.searchResults.length);
   const result = await message(MessageType.GET_SINGER_SONGS, { singer: paging.singer, begin: state.searchResults.length });
   if (state.searchPaging !== paging || state.tab !== tab) { paging.loadingMore = false; return; }
   paging.loadingMore = false;
-  if (!result.ok) { showError(result, "加载更多歌曲失败"); renderSearch(scrollTop); return; }
+  if (!result.ok) { showError(result, "加载更多歌曲失败"); updateLoadStatus(elements.content, paging, state.searchResults.length); return; }
   const previousLength = state.searchResults.length;
   const known = new Set(state.searchResults.map((song) => String(song.mid || song.id || "")));
   const added = uniqueSongs(result.singer.songs || []).filter((song) => !known.has(String(song.mid || song.id || "")));
@@ -338,7 +380,7 @@ function renderSearch(scrollTop = 0) {
     await new Promise((resolve) => setTimeout(resolve, 220));
     if (requestId !== state.searchRequestId) return;
     const cached = state.searchCache.get(keyword);
-    if (cached) { state.searchKeyword = keyword; state.searchResults = [...cached.songs]; state.singerResults = [...cached.singers]; state.albumResults = [...cached.albums]; state.searchPaging = cached.searchPaging ? { ...cached.searchPaging, loadingMore: false } : null; state.singerDetail = null; state.albumDetail = null; showNotice(); renderSearch(); return; }
+    if (cached) { state.searchKeyword = keyword; state.searchResults = [...cached.songs]; state.singerResults = [...cached.singers]; state.albumResults = [...cached.albums]; state.searchPaging = cached.searchPaging ? { ...cached.searchPaging, loadingMore: false, complete: !cached.songs.length || (cached.searchPaging.total > 0 && cached.songs.length >= cached.searchPaging.total) } : null; state.singerDetail = null; state.albumDetail = null; showNotice(); renderSearch(); return; }
     const result = await message(MessageType.SEARCH_SONGS, { keyword });
     if (requestId !== state.searchRequestId) return;
     if (!result.ok) { showError(result, "搜索失败"); return; }
@@ -365,7 +407,7 @@ document.querySelectorAll(".nav-button").forEach((button) => button.addEventList
 document.querySelector("#login-button").addEventListener("click", startLogin); document.querySelector("#retry-login").addEventListener("click", startLogin);
 elements.account.addEventListener("click", () => { const open = elements.accountMenu.hidden; elements.accountMenu.hidden = !open; elements.account.setAttribute("aria-expanded", String(open)); });
 elements.diagnostic.addEventListener("click", copyDiagnostic);
-elements.logout.addEventListener("click", async () => { const result = await message(MessageType.LOGOUT); if (!result?.ok) { showError(result, "退出登录失败"); return; } clearInterval(state.poll); state.searchRequestId += 1; state.library = null; state.toplists = null; state.detail = null; state.detailPaging = null; state.chartDetail = null; state.chartPaging = null; state.singerDetail = null; state.albumDetail = null; state.searchKeyword = ""; state.searchResults = []; state.singerResults = []; state.albumResults = []; state.searchPaging = null; state.likedPaging = null; clear(elements.content); elements.qr.hidden = true; renderPlayer(result.state); showNotice(); showLoginView(); });
+elements.logout.addEventListener("click", async () => { const result = await message(MessageType.LOGOUT); if (!result?.ok) { showError(result, "退出登录失败"); return; } clearInterval(state.poll); state.searchRequestId += 1; state.library = null; state.toplists = null; state.detail = null; state.detailPaging = null; state.chartDetail = null; state.chartPaging = null; state.singerDetail = null; state.albumDetail = null; state.searchKeyword = ""; state.searchResults = []; state.singerResults = []; state.albumResults = []; state.searchPaging = null; state.likedPaging = null; state.searchCache.clear(); clear(elements.content); elements.qr.hidden = true; renderPlayer(result.state); showNotice(); showLoginView(); });
 document.addEventListener("click", (event) => { if (!elements.accountWrap.hidden && !elements.accountWrap.contains(event.target)) closeAccountMenu(); });
 document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeAccountMenu(); });
 document.querySelectorAll("[data-control]").forEach((button) => button.addEventListener("click", async () => { const action = button.dataset.control; const type = action === "previous" ? MessageType.PREVIOUS : action === "next" ? MessageType.NEXT : state.player?.playing ? MessageType.PAUSE : MessageType.PLAY; const result = await message(type); if (!result?.ok) showError(result, "播放操作失败"); }));

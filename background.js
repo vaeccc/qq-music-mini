@@ -1,6 +1,6 @@
 import { ErrorCode, MessageType, PlaybackMode, PlayerEvent, emptyPlayerState } from "./api/types.js";
 import { applyBrandIcon } from "./api/brand-icon.js";
-import { clearCredential, getCredential, getPlayerState, setCredential, setPlayerState } from "./storage/store.js";
+import { clearCredential, clearShuffleState, getCredential, getPlayerState, getShuffleState, setCredential, setPlayerState, setShuffleState } from "./storage/store.js";
 import { createQrLogin, pollQrLogin } from "./api/auth.js";
 import { getAlbumSongs, getPlayUrl, getLikedSongs, getPlaylistDetail, getSingerSongs, getToplistDetail, getToplists, getUserLibrary, QQMusicError, refreshCredential, searchSongs, validateCredential } from "./api/qqmusic.js";
 
@@ -98,6 +98,11 @@ async function initialize() {
   if (initialized) return;
   playerState = { ...emptyPlayerState(), ...((await getPlayerState()) || {}) };
   if (!Object.values(PlaybackMode).includes(playerState.playMode)) playerState.playMode = PlaybackMode.ORDER;
+  // The shuffle history must survive a service-worker restart, otherwise
+  // "previous" would forget where the user came from after the worker idles out.
+  const restoredShuffle = await getShuffleState();
+  shuffleHistory.splice(0, shuffleHistory.length, ...restoredShuffle.history);
+  shuffleQueueKey = restoredShuffle.queueKey;
   // Audio URLs are intentionally never persisted, so a browser restart restores the queue as paused.
   playerState.playing = false;
   // A restored error message describes a failure from a previous session; keeping
@@ -166,6 +171,7 @@ function getNextQueueIndex(queue, currentIndex, offset, { automatic = false, fai
       const candidate = shuffleHistory[position - 1];
       if (excluded.has(candidate)) return -1;
       shuffleHistory.length = position;
+      persistShuffleState();
       return candidate;
     }
     const candidates = queue.map((_, index) => index).filter((index) => index !== currentIndex && !excluded.has(index));
@@ -192,10 +198,15 @@ function rememberShuffleIndex(index) {
   if (shuffleHistory[shuffleHistory.length - 1] === index) return;
   shuffleHistory.push(index);
   if (shuffleHistory.length > 200) shuffleHistory.shift();
+  persistShuffleState();
 }
 
 function queueKey(queue) {
   return (queue || []).map((song) => String(song?.mid || song?.id || "")).join("|");
+}
+
+function persistShuffleState() {
+  return setShuffleState([...shuffleHistory], shuffleQueueKey);
 }
 
 /**
@@ -213,6 +224,7 @@ async function playQueueSong(queue, index, excluded = new Set()) {
   if (nextQueueKey !== shuffleQueueKey) {
     shuffleHistory.length = 0;
     shuffleQueueKey = nextQueueKey;
+    persistShuffleState();
   }
   let cursor = index;
   const skipped = new Set(excluded);
@@ -356,7 +368,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (nextIndex >= 0) errorAdvance = { nextIndex, excluded };
       }
       await publishState();
-      if (message.event === PlayerEvent.ENDED) await move(1, { automatic: true });
+      if (message.event === PlayerEvent.ENDED) {
+        const advanced = await move(1, { automatic: true });
+        // In ORDER mode the queue ends here: the player already sits paused on
+        // the last track, so surface that state instead of freezing silently.
+        if (!advanced?.ok && advanced?.error === "QUEUE_BOUNDARY") await publishState();
+      }
       if (errorAdvance) await playQueueSong(playerState.queue, errorAdvance.nextIndex, errorAdvance.excluded);
       sendResponse({ ok: true });
       return;
@@ -411,6 +428,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const stopRequestId = ++playRequestId;
       shuffleHistory.length = 0;
       shuffleQueueKey = "";
+      await clearShuffleState();
       playerState = { ...emptyPlayerState(), playMode };
       await publishState();
       try {
@@ -487,7 +505,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: false, error: "INVALID_PLAY_MODE", message: "不支持的播放模式" });
         return;
       }
-      if (playerState.playMode !== message.mode) shuffleHistory.length = 0;
+      if (playerState.playMode !== message.mode) {
+        shuffleHistory.length = 0;
+        persistShuffleState();
+      }
       playerState.playMode = message.mode;
       await publishState();
       sendResponse({ ok: true, state: playerState });
