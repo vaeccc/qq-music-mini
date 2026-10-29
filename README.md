@@ -6,6 +6,14 @@
 
 > 非腾讯官方项目，仅供个人学习与技术研究使用。
 
+## Mini 家族
+
+Mini 家族为不同音乐平台提供轻量浏览器播放器：
+
+- [Netease Music Mini](https://github.com/vaeccc/netease-music-mini)：网易云音乐歌单、搜索与后台播放。
+- [Bili mini](https://github.com/vaeccc/Bili-mini)：把有权访问的 B 站视频音轨作为后台音乐播放。
+- [QQ Music Mini](https://github.com/vaeccc/qq-music-mini)：QQ 音乐曲库、搜索与后台播放。
+
 ## 功能
 
 - QQ 音乐二维码登录
