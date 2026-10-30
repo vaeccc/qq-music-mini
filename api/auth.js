@@ -4,6 +4,7 @@ import { ErrorCode } from "./types.js";
 const QR_HOST = "https://ssl.ptlogin2.qq.com/";
 const APP_ID = "716027609";
 const QQ_CONNECT_ID = "100497308";
+const REQUEST_TIMEOUT_MS = 15000;
 
 function hash33(value, seed = 0) {
   let hash = seed;
@@ -18,7 +19,7 @@ function query(url, values) {
 }
 
 async function fetchText(url, options = {}) {
-  const response = await fetch(url, { credentials: "include", redirect: "manual", ...options });
+  const response = await fetch(url, { credentials: "include", redirect: "manual", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), ...options });
   if (!response.ok && response.type !== "opaqueredirect") throw new QQMusicError(ErrorCode.NETWORK, "网络请求失败", { status: response.status });
   return response;
 }
@@ -43,6 +44,7 @@ async function musicLogin(code) {
   const response = await fetch("https://u.y.qq.com/cgi-bin/musicu.fcg", {
     method: "POST",
     credentials: "include",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       comm: { ct: 24, cv: 4747474, platform: "yqq.json", uin: 0, format: "json", notice: 0, tmeLoginType: 2 },
@@ -53,7 +55,7 @@ async function musicLogin(code) {
   const result = await response.json();
   const login = result.req_0 || {};
   if (Number(login.code) !== 0 || !login.data?.musickey) {
-    console.error("QQ login rejected", login);
+    console.error("QQ login rejected", { code: login.code });
     throw new QQMusicError(ErrorCode.NETWORK, "登录失败，请重新尝试", { code: login.code });
   }
   return login.data;
@@ -64,7 +66,7 @@ export async function createQrLogin() {
     appid: APP_ID, e: 2, l: "M", s: 3, d: 72, v: 4, t: Math.random(), daid: 383, pt_3rd_aid: QQ_CONNECT_ID
   });
   let response;
-  try { response = await fetch(url, { credentials: "include" }); } catch (error) {
+  try { response = await fetch(url, { credentials: "include", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }); } catch (error) {
     console.error("QQ QR image request failed", error);
     throw new QQMusicError(ErrorCode.NETWORK, "二维码获取失败，请重新尝试", { stage: "qr-image" });
   }

@@ -7,6 +7,18 @@ import { getAlbumSongs, getPlayUrl, getLikedSongs, getPlaylistDetail, getSingerS
 let playerState = emptyPlayerState();
 let initialized = false;
 let loginAttempt = null;
+let authGeneration = 0;
+let credentialWrites = Promise.resolve();
+
+function changeCredential(generation, change) {
+  const operation = credentialWrites.then(async () => {
+    if (generation !== authGeneration) return false;
+    await change();
+    return generation === authGeneration;
+  });
+  credentialWrites = operation.catch(() => {});
+  return operation;
+}
 let offscreenCreating = null;
 let offscreenReady = false;
 let playRequestId = 0;
@@ -108,21 +120,30 @@ async function initialize() {
 }
 
 async function requireCredential() {
+  const generation = authGeneration;
+  const ensureCurrent = () => { if (generation !== authGeneration) throw new QQMusicError(ErrorCode.LOGIN_EXPIRED, "账号状态已改变，请重新操作"); };
   const credential = await getCredential();
+  ensureCurrent();
   if (!credential) throw new QQMusicError("LOGIN_EXPIRED", "QQ 音乐登录已失效，请重新登录");
   const validity = await validateCredential(credential);
+  ensureCurrent();
   if (validity === true) return credential;
   if (validity === false) {
     try {
       const refreshed = await refreshCredential(credential);
-      if (await validateCredential(refreshed) === true) {
-        await setCredential(refreshed);
+      ensureCurrent();
+      const refreshedValidity = await validateCredential(refreshed);
+      ensureCurrent();
+      if (refreshedValidity === true) {
+        if (!await changeCredential(generation, () => setCredential(refreshed))) ensureCurrent();
         return refreshed;
       }
+      if (refreshedValidity === "unknown") throw new QQMusicError(ErrorCode.NETWORK, "网络连接失败，请检查网络后重试");
     } catch (error) {
-      console.error("Credential refresh failed", error);
+      ensureCurrent();
+      if (!(error instanceof QQMusicError) || error.code !== ErrorCode.LOGIN_EXPIRED) throw new QQMusicError(ErrorCode.NETWORK, "网络连接失败，请检查网络后重试");
     }
-    await clearCredential();
+    if (!await changeCredential(generation, clearCredential)) ensureCurrent();
     throw new QQMusicError("LOGIN_EXPIRED", "QQ 音乐登录已失效，请重新登录");
   }
   // The check could not reach QQ Music. Keep the stored credential so a flaky
@@ -388,7 +409,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return;
     }
     if (message.type === MessageType.LOGIN_START) {
-      loginAttempt = await createQrLogin();
+      const generation = ++authGeneration;
+      loginAttempt = null;
+      const attempt = await createQrLogin();
+      if (generation !== authGeneration) { sendResponse({ ok: true, status: "superseded" }); return; }
+      loginAttempt = { ...attempt, generation, poll: null };
       sendResponse({ ok: true, imageUrl: loginAttempt.imageUrl });
       return;
     }
@@ -397,16 +422,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: false, error: "NO_LOGIN_ATTEMPT", message: "登录失败，请重新尝试" });
         return;
       }
-      const login = await pollQrLogin(loginAttempt.qrsig);
+      const attempt = loginAttempt;
+      if (!attempt.poll) attempt.poll = pollQrLogin(attempt.qrsig).finally(() => { attempt.poll = null; });
+      const login = await attempt.poll;
+      if (attempt !== loginAttempt || attempt.generation !== authGeneration) { sendResponse({ ok: true, status: "superseded" }); return; }
       if (login.status === "done") {
-        await setCredential(login.credential);
+        if (!await changeCredential(attempt.generation, () => setCredential(login.credential))) { sendResponse({ ok: true, status: "superseded" }); return; }
+        if (attempt !== loginAttempt || attempt.generation !== authGeneration) { sendResponse({ ok: true, status: "superseded" }); return; }
         loginAttempt = null;
       }
-      sendResponse({ ok: true, ...login });
+      sendResponse({ ok: true, status: login.status });
       return;
     }
     if (message.type === MessageType.LOGOUT) {
-      await clearCredential();
+      const generation = ++authGeneration;
+      loginAttempt = null;
+      await changeCredential(generation, clearCredential);
       const playMode = playerState.playMode || PlaybackMode.ORDER;
       const stopRequestId = ++playRequestId;
       shuffleHistory.length = 0;

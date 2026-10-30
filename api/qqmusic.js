@@ -63,6 +63,7 @@ async function musicu(requests, credential = null) {
     response = await fetch(MUSICU, {
       method: "POST",
       credentials: "include",
+      signal: AbortSignal.timeout(15000),
       headers: { "content-type": "application/json", "user-agent": WEB_UA },
       body: JSON.stringify({ comm: common(credential), ...requests })
     });
@@ -487,7 +488,7 @@ export async function searchSongs(keyword, credential) {
       const singerUrl = new URL("https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg");
       singerUrl.searchParams.set("key", keyword);
       singerUrl.searchParams.set("format", "json");
-      const singerResponse = await fetch(singerUrl, { credentials: "include" });
+      const singerResponse = await fetch(singerUrl, { credentials: "include", signal: AbortSignal.timeout(15000) });
       if (singerResponse.ok) {
         const singerData = await singerResponse.json();
         singers = (singerData?.data?.singer?.itemlist || []).map(normalizeSinger).filter((singer) => singer.mid);
@@ -688,7 +689,7 @@ export async function getPlayUrl(song, credential) {
   const item = data?.midurlinfo?.[0];
   if (!item?.purl) {
     const code = Number(item?.result ?? data?.code ?? -1);
-    console.error("QQ Music play URL unavailable", { code, song: song.mid, data });
+    console.error("QQ Music play URL unavailable", { code, song: song.mid });
     if ([104003, 104013].includes(code)) throw new QQMusicError(ErrorCode.NO_PERMISSION, "当前账号无播放权限", { code });
     if (code === 104004) throw new QQMusicError(ErrorCode.PLAY_URL, "播放地址获取失败", { code });
     throw new QQMusicError(ErrorCode.NO_COPYRIGHT, "当前歌曲暂不可播放", { code });
